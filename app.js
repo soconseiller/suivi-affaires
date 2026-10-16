@@ -61,6 +61,18 @@
     return u ? (u.nom || u.email) : email;
   };
 
+  /** Étape précédente (mêmes règles que le programme Google) */
+  function etapePrec(d) {
+    const aDesCommandes = S.data.commandes.some((c) => c.dossierId === d.id);
+    return {
+      devis_envoye: 'devis_a_faire', commande: 'devis_envoye', materiel: 'commande',
+      planifie: aDesCommandes ? 'materiel' : 'commande', en_cours: 'planifie', termine: 'en_cours',
+      facture: 'termine', refuse: 'devis_envoye', ignore: 'devis_a_faire'
+    }[d.etape] || null;
+  }
+  const btnRetour = (d) => etapePrec(d)
+    ? '<button class="btn ghost" data-act="retour" data-id="' + d.id + '" title="Revenir à « ' + esc(ETAPES()[etapePrec(d)]) + ' »">↩ Étape précédente</button>' : '';
+
   function pillEtape(d) {
     const cls = { devis_a_faire: 'amber', termine: 'amber', facture: 'green', refuse: 'red', ignore: 'grey' }[d.etape] || '';
     return '<span class="pill ' + cls + '">' + esc(ETAPES()[d.etape] || d.etape) + '</span>';
@@ -327,7 +339,7 @@
     const h = new Date().getHours();
     return '<div class="page-head"><div><h1>' + (h < 18 ? 'Bonjour' : 'Bonsoir') + ' ' + esc((u.nom || '').split(' ')[0]) + '</h1>' +
       '<p>' + fr(t, true) + ' · ' + ds.filter(ouvert).length + ' dossiers ouverts</p></div>' +
-      '<div class="actions"><button class="btn" data-act="scan">Lire l\'agenda maintenant</button></div></div>' +
+      '<div class="actions"><button class="btn" data-act="nouveau">+ Nouveau dossier</button><button class="btn" data-act="scan">Lire l\'agenda maintenant</button></div></div>' +
       '<div class="stats">' +
       stat('#/devis', c.devis, 'Devis à faire', c.devisRetard, 'en retard') +
       stat('#/relances', c.relances, 'Devis en attente', c.relancesDues, 'à relancer') +
@@ -371,14 +383,14 @@
       '<div class="item-meta">' + (opts.meta || []).filter(Boolean).map((m) => '<span>' + m + '</span>').join('') + '</div>' +
       (opts.note ? '<div class="item-note">' + esc(opts.note) + '</div>' : '') +
       (opts.extra || '') +
-      '</div>' + (opts.actions ? '<div class="actions">' + opts.actions + '</div>' : '') + '</div>';
+      '</div>' + (opts.actions || opts.retour ? '<div class="actions">' + (opts.actions || '') + (opts.retour ? btnRetour(d) : '') + '</div>' : '') + '</div>';
   }
   const vide = (txt) => '<div class="empty">' + txt + '</div>';
 
   function vueDevis() {
     const ds = S.data.dossiers.filter((d) => d.etape === 'devis_a_faire').sort((a, b) => (a.dateRdv < b.dateRdv ? -1 : 1));
     return '<div class="page-head"><div><h1>Devis à faire</h1><p>Rendez-vous repérés dans l\'agenda avec le mot « ' + esc(S.data.reglages.motsCles) + ' ».</p></div>' +
-      '<div class="actions"><button class="btn primary" data-act="scan">Lire l\'agenda maintenant</button></div></div>' +
+      '<div class="actions"><button class="btn" data-act="nouveau">+ Nouveau dossier</button><button class="btn primary" data-act="scan">Lire l\'agenda maintenant</button></div></div>' +
       (ds.length ? '<div class="list">' + ds.map((d) => ligne(d, {
         late: enRetard.devis(d),
         meta: ['Rdv ' + fr(d.dateRdv, true) + (d.heureRdv ? ' à ' + d.heureRdv.replace(':', 'h') : ''), d.lieu && esc(d.lieu), d.client && d.titreRdv !== d.client && esc(d.titreRdv)],
@@ -397,7 +409,7 @@
           late: late, lateLabel: 'à relancer',
           meta: ['Devis <strong>' + esc(d.numDevis) + '</strong> du ' + fr(d.dateDevis), 'Relance ' + fr(d.prochaineRelance, true) + ' (' + relatif(d.prochaineRelance) + ')'],
           note: d.notesRelance,
-          actions: '<button class="btn primary" data-act="reponse" data-id="' + d.id + '">Réponse du client</button>'
+          actions: '<button class="btn primary" data-act="reponse" data-id="' + d.id + '">Réponse du client</button>', retour: true
         });
       }).join('') + '</div>' : vide('Aucun devis en attente de réponse.'));
   }
@@ -417,7 +429,8 @@
           c.arcFichier ? '<a href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">PDF de l\'ARC</a>' : ''],
         note: c.commentaire,
         actions: (avecArc ? '<button class="btn primary" data-act="arc" data-id="' + c.id + '" data-v="oui">ARC contrôlé</button>' : '') +
-          '<label class="btn">Joindre le PDF<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + c.dossierId + '"></label>'
+          '<label class="btn">Joindre le PDF<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + c.dossierId + '"></label>' +
+          '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button>'
       });
     };
     return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, ARC à contrôler et livraisons à venir.</p></div></div>' +
@@ -425,7 +438,7 @@
       (aCommander.length ? '<div class="list">' + aCommander.map((d) => ligne(d, {
         late: enRetard.materiel(d),
         meta: ['Devis ' + esc(d.numDevis), 'Validé le ' + fr(d.dateValidation), d.numCommande ? 'Commande ' + esc(d.numCommande) : '<span class="pill amber">N° de commande à saisir</span>'],
-        actions: '<button class="btn primary" data-act="commande" data-id="' + d.id + '">Commande passée</button>'
+        actions: '<button class="btn primary" data-act="commande" data-id="' + d.id + '">Commande passée</button>', retour: true
       })).join('') + '</div>' : vide('Rien à commander.')) +
       '<h2 class="section-title">ARC à contrôler (' + arcs.length + ')</h2>' +
       (arcs.length ? '<div class="list">' + arcs.map((c) => cmdLigne(c, true)).join('') + '</div>' : vide('Tous les ARC sont contrôlés.')) +
@@ -444,7 +457,7 @@
       (aPlanifier.length ? '<div class="list">' + aPlanifier.map((d) => ligne(d, {
         titre: nomChantier(d),
         meta: [esc(nomClient(d)), livraisonsDe(d).length ? livraisonsDe(d).map((c) => 'livraison ' + fr(c.dateLivraison)).join(', ') : 'matériel pas encore commandé'],
-        actions: '<button class="btn primary" data-act="planifier" data-id="' + d.id + '">Planifier</button>'
+        actions: '<button class="btn primary" data-act="planifier" data-id="' + d.id + '">Planifier</button>', retour: true
       })).join('') + '</div>' : vide('Aucun chantier à planifier.')) +
       '<h2 class="section-title">Chantiers planifiés (' + planifies.length + ')</h2>' +
       (planifies.length ? '<div class="list">' + planifies.map((d) => ligne(d, {
@@ -452,7 +465,7 @@
         meta: [fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : ''), esc(nomClient(d)),
           d.techniciens ? esc(d.techniciens.split(',').map(nomUser).join(', ')) : 'technicien à choisir', pillEtape(d)],
         extra: '<div class="progress-line" style="margin-top:8px;max-width:320px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div>' + (Number(d.avancement) || 0) + ' %</div>',
-        actions: '<a class="btn" href="#/terrain/' + d.id + '">Écran chantier</a><button class="btn" data-act="planifier" data-id="' + d.id + '">Modifier</button>'
+        actions: '<a class="btn" href="#/terrain/' + d.id + '">Écran chantier</a><button class="btn" data-act="planifier" data-id="' + d.id + '">Modifier</button>', retour: true
       })).join('') + '</div>' : vide('Aucun chantier planifié.'));
   }
 
@@ -466,7 +479,8 @@
           meta: [f.type === 'finale' ? '<span class="pill amber">Facture finale</span>' : '<span class="pill">Intermédiaire ' + esc(f.pourcentage) + ' %</span>',
             esc(nomClient(d)), 'Demandée le ' + fr(f.dateDemande) + ' par ' + esc(f.demandePar), d.numCommande ? 'Commande ' + esc(d.numCommande) : ''],
           note: f.commentaire,
-          actions: '<button class="btn green" data-act="factureFaite" data-id="' + f.id + '">Facture faite</button>'
+          actions: '<button class="btn green" data-act="factureFaite" data-id="' + f.id + '">Facture faite</button>' +
+            (f.type === 'finale' ? btnRetour(d) : '<button class="btn ghost" data-act="modifFacture" data-id="' + f.id + '">Modifier</button>')
         });
       }).join('') + '</div>' : vide('Aucune facture à faire.'));
   }
@@ -487,7 +501,8 @@
     $('#search-results').innerHTML = ds.length
       ? '<div class="list">' + ds.slice(0, 100).map((d) => ligne(d, {
         meta: [pillEtape(d), d.numDevis && 'Devis ' + esc(d.numDevis), d.numCommande && 'Commande ' + esc(d.numCommande), d.chantier && esc(d.chantier),
-          d.motifRefus && 'Motif : ' + esc(d.motifRefus), d.dateCloture && 'Clos le ' + fr(d.dateCloture)]
+          d.motifRefus && 'Motif : ' + esc(d.motifRefus), d.dateCloture && 'Clos le ' + fr(d.dateCloture)],
+        retour: !ouvert(d)
       })).join('') + '</div>'
       : vide(qq ? 'Aucun dossier ne correspond.' : 'Aucun dossier archivé.');
   }
@@ -527,7 +542,7 @@
     const retour = { devis_a_faire: ['#/devis', 'Devis à faire'], devis_envoye: ['#/relances', 'Relances clients'], commande: ['#/commandes', 'Commandes'], materiel: ['#/planning', 'Planning'], planifie: ['#/planning', 'Planning'], en_cours: ['#/planning', 'Planning'], termine: ['#/facturer', 'À facturer'] }[d.etape] || ['#/archives', 'Archives'];
     return '<a class="back" href="' + retour[0] + '">← ' + retour[1] + '</a>' +
       '<div class="page-head"><div><h1>' + esc(nomClient(d)) + '</h1><p>' + pillEtape(d) + (d.chantier ? ' · ' + esc(d.chantier) : '') + (d.demo === 'oui' ? ' · <span class="pill grey">démo</span>' : '') + '</p></div>' +
-      '<div class="actions">' + actions + '<button class="btn" data-act="modifier" data-id="' + d.id + '">Modifier</button></div></div>' +
+      '<div class="actions">' + actions + '<button class="btn" data-act="modifier" data-id="' + d.id + '">Modifier</button>' + btnRetour(d) + '</div></div>' +
       steps +
       '<div class="grid two">' +
       '<div>' +
@@ -556,7 +571,8 @@
         '<div class="actions" style="align-items:center"><label class="check"><input type="checkbox" data-arc="' + c.id + '"' + (c.arcControle === 'oui' ? ' checked' : '') + '> ARC contrôlé</label>' +
         (c.arcFichier ? '<a class="small" href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">Voir le PDF</a>' : '') +
         '<label class="btn ghost">' + (c.arcFichier ? 'Remplacer le PDF' : 'Joindre le PDF') + '<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + d.id + '"></label>' +
-        '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button></div></div>').join('') + '</div>'
+        '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button>' +
+        '<button class="btn ghost danger" data-act="supprCommande" data-id="' + c.id + '">Supprimer</button></div></div>').join('') + '</div>'
         : '<p class="muted">Aucune commande de matériel.</p>') + '</div>' +
       '</div>' +
       '<div>' +
@@ -569,22 +585,27 @@
         : '<p class="muted">Pas encore planifié.</p>') + '</div>' +
       '<div class="card"><h2>Factures</h2>' + (factures.length ? '<ul class="mini-list">' + factures.map((f) =>
         '<li><span>' + (f.type === 'finale' ? 'Facture finale' : 'Intermédiaire ' + esc(f.pourcentage) + ' %') + '<br><span class="muted small">demandée le ' + fr(f.dateDemande) + (f.commentaire ? ' · ' + esc(f.commentaire) : '') + '</span></span>' +
-        (f.faite === 'oui' ? '<span class="pill green">faite le ' + fr(f.dateFaite) + '</span>' : '<button class="btn green" data-act="factureFaite" data-id="' + f.id + '">Facture faite</button>') + '</li>').join('') + '</ul>'
+        '<span class="actions" style="justify-content:flex-end">' +
+        (f.faite === 'oui'
+          ? '<span class="pill green">faite le ' + fr(f.dateFaite) + '</span><button class="btn ghost" data-act="annulerFacture" data-id="' + f.id + '">Annuler</button>'
+          : '<button class="btn green" data-act="factureFaite" data-id="' + f.id + '">Facture faite</button>' +
+            (f.type === 'intermediaire' ? '<button class="btn ghost" data-act="modifFacture" data-id="' + f.id + '">Modifier</button><button class="btn ghost danger" data-act="supprFacture" data-id="' + f.id + '">Supprimer</button>' : '')) +
+        '</span></li>').join('') + '</ul>'
         : '<p class="muted">Aucune facture demandée.</p>') + '</div>' +
       '<div class="card"><h2>Commentaires et photos du chantier</h2>' + blocCommentaires(commentaires) + '</div>' +
       '<div class="card"><h2>Historique</h2><ul class="history">' + historique.map((h) =>
         '<li><span class="when">' + fr(h.date) + '</span><span><strong>' + esc(h.action) + '</strong>' + (h.note ? ' – ' + esc(h.note) : '') + ' <span class="muted">· ' + esc(h.qui) + '</span></span></li>').join('') + '</ul></div>' +
-      (estAdmin() ? '<div class="card"><h2>Corriger l\'étape</h2><p class="muted small" style="margin-top:0">En cas d\'erreur, remettez le dossier à la bonne étape.</p>' +
-        '<div class="actions"><select id="etape-corr" style="max-width:260px">' + Object.keys(ETAPES()).map((e) =>
-          '<option value="' + e + '"' + (e === d.etape ? ' selected' : '') + '>' + esc(ETAPES()[e]) + '</option>').join('') + '</select>' +
-        '<button class="btn" data-act="corriger" data-id="' + d.id + '">Appliquer</button></div></div>' : '') +
+      '<div class="card"><h2>Statut du dossier</h2><p class="muted small" style="margin-top:0">En cas d\'erreur, revenez à l\'étape précédente ou supprimez le dossier. Chaque changement est noté dans l\'historique avec son motif.</p>' +
+      '<div class="actions">' + (btnRetour(d) ? btnRetour(d).replace('btn ghost', 'btn') : '<span class="muted small">Première étape : pas de retour possible.</span>') +
+      '<button class="btn danger" data-act="supprDossier" data-id="' + d.id + '">Supprimer le dossier</button></div></div>' +
       '</div></div>';
   }
 
   function blocCommentaires(list) {
     if (!list.length) return '<p class="muted">Aucun commentaire pour l\'instant.</p>';
     return list.map((c) =>
-      '<div class="comment"><div class="who">' + esc(c.auteur) + ' · ' + fr(c.date, true) + '</div>' +
+      '<div class="comment"><div class="who">' + esc(c.auteur) + ' · ' + fr(c.date, true) +
+      ' · <button class="link" data-act="modifCom" data-id="' + c.id + '">modifier</button> · <button class="link danger" data-act="supprCom" data-id="' + c.id + '">supprimer</button></div>' +
       (c.texte ? '<p>' + esc(c.texte) + '</p>' : '') +
       (c.photo ? '<a class="photo" href="https://drive.google.com/file/d/' + esc(c.photo) + '/view" target="_blank" rel="noopener">' +
         '<img src="https://drive.google.com/thumbnail?id=' + esc(c.photo) + '&sz=w480" alt="Photo du chantier" loading="lazy" onerror="this.outerHTML=\'<span class=alt>Voir la photo</span>\'"></a>' : '') +
@@ -831,7 +852,8 @@
       const c = S.data.commandes.find((x) => x.id === id);
       fenetre({
         titre: 'Modifier la commande',
-        corps: champ('Fournisseur', input('fournisseur', c.fournisseur)) + champ('Livraison prévue le', input('dateLivraison', c.dateLivraison, 'date')) +
+        corps: champ('Fournisseur', input('fournisseur', c.fournisseur)) +
+          '<div class="row2">' + champ('Commandé le', input('dateCommande', c.dateCommande, 'date')) + champ('Livraison prévue le', input('dateLivraison', c.dateLivraison, 'date')) + '</div>' +
           champ('Commentaire', '<textarea name="commentaire" rows="2">' + esc(c.commentaire) + '</textarea>'),
         valider: async (v) => { await agir('modifierCommande', Object.assign({ id }, v), 'Commande modifiée'); }
       });
@@ -898,6 +920,62 @@
     },
     confirmer(titre, texte, bouton, fn, classe) {
       fenetre({ titre, corps: '<p>' + texte + '</p>', bouton, classe: classe || 'primary', valider: fn });
+    },
+    /** Confirmation avec motif obligatoire, gardé dans l'historique */
+    avecMotif(titre, texte, bouton, fn, classe) {
+      fenetre({
+        titre, corps: '<p>' + texte + '</p>' + champ('Motif *', '<textarea name="motif" rows="2" placeholder="Pourquoi ce changement ?"></textarea>', 'Il sera noté dans l\'historique du dossier.'),
+        bouton, classe: classe || 'primary',
+        valider: (v) => { if (!v.motif) throw new Error('Indiquez le motif.'); return fn(v.motif); }
+      });
+    },
+    retour(id) {
+      const d = parId(id);
+      const cible = etapePrec(d);
+      const notes = {
+        devis_envoye: 'La relance client repartira d\'aujourd\'hui.',
+        commande: 'Le rappel « commander le matériel » repartira d\'aujourd\'hui. Les dates de chantier seront effacées si le chantier était planifié.',
+        materiel: 'Les dates de chantier seront effacées.',
+        planifie: 'L\'avancement repassera à 0 %.',
+        en_cours: 'La facture finale pas encore faite sera retirée.',
+        termine: 'La facture finale redevient « à faire » et le rappel « À facturer » repartira d\'aujourd\'hui.',
+        devis_a_faire: 'Le rappel « Devis à faire » repartira d\'aujourd\'hui.'
+      };
+      FORMS.avecMotif('Revenir à l\'étape précédente',
+        '<strong>' + esc(nomClient(d)) + '</strong> passe de « ' + esc(ETAPES()[d.etape]) + ' » à « ' + esc(ETAPES()[cible]) + ' ». ' + (notes[cible] || ''),
+        'Revenir en arrière', (motif) => agir('etapePrecedente', { id, motif }, 'Dossier revenu à « ' + ETAPES()[cible] + ' »'));
+    },
+    nouveau() {
+      fenetre({
+        titre: 'Nouveau dossier', sousTitre: 'Pour un client qui n\'a pas de rendez-vous dans l\'agenda.',
+        corps: champ('Nom du client *', input('client', '')) +
+          '<div class="row2">' + champ('Date du contact', input('dateRdv', today(), 'date')) + champ('Lieu', input('lieu', '')) + '</div>' +
+          champ('Notes', '<textarea name="notes" rows="3" placeholder="Ce que veut le client…"></textarea>') +
+          champ('Numéro de devis', input('numDevis', ''), 'Seulement si le devis est déjà envoyé. Le dossier passera alors directement en « Devis envoyé ».'),
+        bouton: 'Créer le dossier',
+        valider: async (v) => {
+          if (!v.client) throw new Error('Le nom du client est obligatoire.');
+          const r = await agir('creerDossier', v, 'Dossier créé');
+          if (r && r.resultat) location.hash = '#/dossier/' + r.resultat;
+        }
+      });
+    },
+    modifFacture(id) {
+      const f = S.data.factures.find((x) => x.id === id);
+      fenetre({
+        titre: 'Modifier la facture intermédiaire',
+        corps: champ('Pourcentage', input('pourcentage', f.pourcentage, 'number', 'min="1" max="99" inputmode="numeric"')) +
+          champ('Commentaire', '<textarea name="commentaire" rows="3">' + esc(f.commentaire) + '</textarea>'),
+        valider: (v) => agir('modifierFacture', { id, pourcentage: v.pourcentage, commentaire: v.commentaire }, 'Facture modifiée')
+      });
+    },
+    modifCom(id) {
+      const c = (S.dossier.commentaires || []).find((x) => x.id === id);
+      fenetre({
+        titre: 'Modifier le commentaire',
+        corps: champ('Commentaire', '<textarea name="texte" rows="5">' + esc(c.texte) + '</textarea>'),
+        valider: (v) => agir('modifierCommentaire', { id, texte: v.texte }, 'Commentaire modifié')
+      });
     }
   };
 
@@ -983,11 +1061,6 @@
       async () => {
         await agir('factureFaite', { factureId: el.dataset.id }, 'Facture enregistrée');
       }, 'green'),
-    corriger: (el) => essayer(async () => {
-      const e = $('#etape-corr').value;
-      await agir('retourEtape', { id: el.dataset.id, etape: e }, 'Étape corrigée');
-      await afficher();
-    }),
     ajoutCom: (el) => essayer(async () => {
       const t = $('#com-txt').value.trim();
       if (!t) { toast('Écrivez ou dictez un commentaire.', true); return; }
@@ -995,6 +1068,26 @@
       await afficher();
     }),
     factInter: (el) => FORMS.factInter(el.dataset.id),
+    retour: (el) => FORMS.retour(el.dataset.id),
+    nouveau: () => FORMS.nouveau(),
+    supprDossier: (el) => {
+      const d = parId(el.dataset.id);
+      FORMS.avecMotif('Supprimer ce dossier ?', 'Le dossier <strong>' + esc(nomClient(d)) + '</strong> sera supprimé avec ses commandes, factures et commentaires. Les fichiers déjà rangés dans Google Drive sont conservés. <strong>Cette action est définitive.</strong>',
+        'Supprimer définitivement', async (motif) => { await agir('supprimerDossier', { id: d.id, motif }, 'Dossier supprimé'); location.hash = '#/'; }, 'danger');
+    },
+    supprCommande: (el) => {
+      const c = S.data.commandes.find((x) => x.id === el.dataset.id);
+      FORMS.avecMotif('Supprimer cette commande ?', 'Commande <strong>' + esc(c.fournisseur) + '</strong>, livraison le ' + fr(c.dateLivraison) + '.', 'Supprimer',
+        (motif) => agir('supprimerCommande', { id: c.id, motif }, 'Commande supprimée'), 'danger');
+    },
+    modifFacture: (el) => FORMS.modifFacture(el.dataset.id),
+    supprFacture: (el) => FORMS.avecMotif('Supprimer cette demande de facture ?', 'La demande de facture intermédiaire sera retirée.', 'Supprimer',
+      (motif) => agir('supprimerFacture', { id: el.dataset.id, motif }, 'Demande supprimée'), 'danger'),
+    annulerFacture: (el) => FORMS.avecMotif('Annuler « facture faite » ?', 'La facture redevient « à faire » et le rappel repartira d\'aujourd\'hui. Si c\'est la facture finale, le dossier revient en « À facturer ».', 'Annuler la facture',
+      (motif) => agir('annulerFacture', { id: el.dataset.id, motif }, 'Facture remise à faire')),
+    modifCom: (el) => FORMS.modifCom(el.dataset.id),
+    supprCom: (el) => FORMS.confirmer('Supprimer ce commentaire ?', 'Le commentaire (et la photo, s\'il y en a une) ne sera plus affiché. La photo reste dans Google Drive.', 'Supprimer',
+      () => agir('supprimerCommentaire', { id: el.dataset.id }, 'Commentaire supprimé'), 'danger'),
     termine: (el) => FORMS.termine(el.dataset.id),
     saveMails: () => essayer(async () => {
       const mails = Array.from(document.querySelectorAll('details.mail')).map((box) => {
