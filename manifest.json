@@ -1,0 +1,11 @@
+{
+  "name": "Suivi affaires",
+  "short_name": "Suivi affaires",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F4F5F8",
+  "theme_color": "#1B2A4A",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
