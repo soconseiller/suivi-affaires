@@ -3,5 +3,5 @@ window.SUIVI_CONFIG = {
   // Lien du programme Google (déploiement « Application Web »), se termine par /exec
   API_URL: 'https://script.google.com/macros/s/AKfycbzwv9N2wZcpmcndLIdslMhWLTnJVpITXohhG83hVbBtw37IpfJdFzfXKSKoyrMsKyeb3w/exec',
   // Identifiant client OAuth créé dans Google Cloud (le même que dans Code.gs)
-  CLIENT_ID: 'A_REMPLIR.apps.googleusercontent.com'
+  CLIENT_ID: '174824749765-l0qkvb94mb62lvu3e8q9joo9lv7436da.apps.googleusercontent.com'
 };
