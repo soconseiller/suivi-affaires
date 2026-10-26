@@ -79,11 +79,23 @@
   }
 
   /* Retards (mêmes règles que les mails) */
+  /* Réception du matériel (une par commande fournisseur) */
+  const LIB_RECEP = { '': 'À réceptionner', conforme: 'Reçu conforme', non_conforme: 'Non conforme', partielle: 'Reçu en partie' };
+  const recepOuverte = (c) => c.receptionStatut !== 'conforme';
+  function pillRecep(c) {
+    const st = c.receptionStatut || '';
+    const cls = { conforme: 'green', non_conforme: 'red', partielle: 'amber' }[st] || (c.dateLivraison && c.dateLivraison <= today() ? 'amber' : 'grey');
+    return '<span class="pill ' + cls + '">' + LIB_RECEP[st] + '</span>';
+  }
+  const btnRecep = (c, cls) => '<button class="btn ' + (cls || 'primary') + '" data-act="reception" data-id="' + c.id + '">' +
+    (c.receptionStatut === 'non_conforme' || c.receptionStatut === 'partielle' ? 'Nouvelle réception' : 'Valider la réception') + '</button>';
+
   const enRetard = {
     devis: (d) => d.etape === 'devis_a_faire' && d.dateRdv && addDays(d.dateRdv, delai('devis_a_faire')) <= today(),
     relance: (d) => d.etape === 'devis_envoye' && d.prochaineRelance && d.prochaineRelance <= today(),
     materiel: (d) => d.etape === 'commande' && d.dateValidation && addDays(d.dateValidation, delai('commande_materiel')) <= today(),
-    arc: (c) => c.arcControle !== 'oui' && c.dateCommande && addDays(c.dateCommande, delai('arc')) <= today()
+    arc: (c) => c.arcControle !== 'oui' && c.dateCommande && addDays(c.dateCommande, delai('arc')) <= today(),
+    reception: (c) => recepOuverte(c) && c.dateLivraison && addDays(c.dateLivraison, delai('reception')) <= today()
   };
 
   /* ================================================================
@@ -111,11 +123,12 @@
         }
         const e = new Error(out.error || 'Erreur inconnue');
         e.code = out.code;
+        e.serveur = true;
         throw e;
       }
       return out.data;
     } catch (e) {
-      if (!e.code) e.message = "Le programme Google ne répond pas. Vérifiez votre connexion internet. (" + e.message + ')';
+      if (!e.code && !e.serveur) e.message = "Le programme Google ne répond pas. Vérifiez votre connexion internet. (" + e.message + ')';
       throw e;
     } finally {
       chargement(false);
@@ -200,6 +213,8 @@
       materielRetard: ds.filter(enRetard.materiel).length,
       arc: arcs.length,
       arcRetard: arcs.filter(enRetard.arc).length,
+      receptions: S.data.commandes.filter((c2) => ouvert(parId(c2.dossierId)) && recepOuverte(c2) && c2.dateLivraison && c2.dateLivraison <= today()).length,
+      receptionsRetard: S.data.commandes.filter((c2) => ouvert(parId(c2.dossierId)) && (enRetard.reception(c2) || c2.receptionStatut === 'non_conforme')).length,
       aPlanifier: dOuverts.filter((d) => ['commande', 'materiel'].indexOf(d.etape) >= 0 && !d.dateDebut).length,
       enCours: ds.filter((d) => d.etape === 'en_cours').length,
       planifies: dOuverts.filter((d) => ['planifie', 'en_cours'].indexOf(d.etape) >= 0 || (d.dateDebut && ['commande', 'materiel'].indexOf(d.etape) >= 0)).length,
@@ -218,7 +233,7 @@
       lien('#/', 'Tableau de bord') +
       lien('#/devis', 'Devis à faire', c.devis, c.devisRetard) +
       lien('#/relances', 'Relances clients', c.relancesDues || '', c.relancesDues) +
-      lien('#/commandes', 'Commandes', c.materiel + c.arc, c.materielRetard + c.arcRetard) +
+      lien('#/commandes', 'Commandes', c.materiel + c.arc + c.receptions, c.materielRetard + c.arcRetard + c.receptionsRetard) +
       lien('#/planning', 'Planning', c.aPlanifier, false) +
       lien('#/facturer', 'À facturer', c.factures, c.factures) +
       lien('#/archives', 'Archives') +
@@ -301,6 +316,8 @@
     ds.filter(enRetard.materiel).forEach((d) => retards.push({ d, txt: 'Matériel à commander', date: d.dateValidation, quand: 'validé ' + fr(d.dateValidation) }));
     S.data.commandes.filter((c2) => enRetard.arc(c2) && ouvert(parId(c2.dossierId))).forEach((c2) =>
       retards.push({ d: parId(c2.dossierId), txt: 'ARC à contrôler (' + c2.fournisseur + ')', date: c2.dateCommande, quand: 'commandé ' + fr(c2.dateCommande) }));
+    S.data.commandes.filter((c2) => ouvert(parId(c2.dossierId)) && (enRetard.reception(c2) || c2.receptionStatut === 'non_conforme')).forEach((c2) =>
+      retards.push({ d: parId(c2.dossierId), txt: (c2.receptionStatut === 'non_conforme' ? 'Réception non conforme (' : 'Réception à valider (') + c2.fournisseur + ')', date: c2.dateLivraison, quand: 'attendu ' + fr(c2.dateLivraison) }));
     S.data.factures.filter((f) => f.faite !== 'oui' && parId(f.dossierId)).forEach((f) =>
       retards.push({ d: parId(f.dossierId), txt: f.type === 'finale' ? 'Facture finale à faire' : 'Facture intermédiaire ' + f.pourcentage + ' %', date: f.dateDemande, quand: 'demandée ' + fr(f.dateDemande) }));
     retards.sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -310,7 +327,7 @@
     const semaine = [];
     S.data.commandes.forEach((c2) => {
       const d = parId(c2.dossierId);
-      if (ouvert(d) && c2.dateLivraison >= t && c2.dateLivraison <= fin) semaine.push({ date: c2.dateLivraison, d, txt: 'Livraison ' + c2.fournisseur });
+      if (ouvert(d) && recepOuverte(c2) && c2.dateLivraison >= t && c2.dateLivraison <= fin) semaine.push({ date: c2.dateLivraison, d, txt: 'Livraison ' + c2.fournisseur });
     });
     ds.filter(ouvert).forEach((d) => {
       if (d.dateDebut && d.dateDebut >= t && d.dateDebut <= fin) semaine.push({ date: d.dateDebut, d, txt: 'Début de chantier' });
@@ -419,21 +436,26 @@
     const aCommander = ds.filter((d) => d.etape === 'commande').sort((a, b) => (a.dateValidation < b.dateValidation ? -1 : 1));
     const cmds = S.data.commandes.filter((c) => ouvert(parId(c.dossierId))).sort((a, b) => (a.dateLivraison < b.dateLivraison ? -1 : 1));
     const arcs = cmds.filter((c) => c.arcControle !== 'oui');
-    const livraisons = cmds.filter((c) => c.dateLivraison >= today());
-    const cmdLigne = (c, avecArc) => {
+    const receptions = cmds.filter((c) => c.receptionStatut === 'non_conforme' || (recepOuverte(c) && c.dateLivraison <= today()));
+    const livraisons = cmds.filter((c) => recepOuverte(c) && c.receptionStatut !== 'non_conforme' && c.dateLivraison > today());
+    const cmdLigne = (c, mode) => {
       const d = parId(c.dossierId);
+      const nc = c.receptionStatut === 'non_conforme';
       return ligne(d, {
         titre: nomChantier(d) + ' · ' + c.fournisseur,
-        late: avecArc && enRetard.arc(c), lateLabel: 'ARC en retard',
+        late: mode === 'arc' ? enRetard.arc(c) : mode === 'recep' ? (nc || enRetard.reception(c)) : false,
+        lateLabel: mode === 'arc' ? 'ARC en retard' : nc ? 'à traiter' : 'réception en retard',
         meta: ['Commandé le ' + fr(c.dateCommande), 'Livraison ' + fr(c.dateLivraison, true) + ' (' + relatif(c.dateLivraison) + ')',
+          mode === 'arc' ? '' : pillRecep(c),
           c.arcFichier ? '<a href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">PDF de l\'ARC</a>' : ''],
-        note: c.commentaire,
-        actions: (avecArc ? '<button class="btn primary" data-act="arc" data-id="' + c.id + '" data-v="oui">ARC contrôlé</button>' : '') +
-          '<label class="btn">Joindre le PDF<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + c.dossierId + '"></label>' +
+        note: (mode !== 'arc' && c.receptionCommentaire && c.receptionStatut ? 'Réception : ' + c.receptionCommentaire + '\n' : '') + (c.commentaire || ''),
+        actions: (mode === 'arc' ? '<button class="btn primary" data-act="arc" data-id="' + c.id + '" data-v="oui">ARC contrôlé</button>' +
+            '<label class="btn">Joindre le PDF<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + c.dossierId + '"></label>'
+          : btnRecep(c, mode === 'recep' ? 'primary' : '')) +
           '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button>'
       });
     };
-    return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, ARC à contrôler et livraisons à venir.</p></div></div>' +
+    return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, ARC à contrôler, réceptions et livraisons à venir.</p></div></div>' +
       '<h2 class="section-title">Matériel à commander (' + aCommander.length + ')</h2>' +
       (aCommander.length ? '<div class="list">' + aCommander.map((d) => ligne(d, {
         late: enRetard.materiel(d),
@@ -441,9 +463,11 @@
         actions: '<button class="btn primary" data-act="commande" data-id="' + d.id + '">Commande passée</button>', retour: true
       })).join('') + '</div>' : vide('Rien à commander.')) +
       '<h2 class="section-title">ARC à contrôler (' + arcs.length + ')</h2>' +
-      (arcs.length ? '<div class="list">' + arcs.map((c) => cmdLigne(c, true)).join('') + '</div>' : vide('Tous les ARC sont contrôlés.')) +
+      (arcs.length ? '<div class="list">' + arcs.map((c) => cmdLigne(c, 'arc')).join('') + '</div>' : vide('Tous les ARC sont contrôlés.')) +
+      '<h2 class="section-title">Réceptions à valider (' + receptions.length + ')</h2>' +
+      (receptions.length ? '<div class="list">' + receptions.map((c) => cmdLigne(c, 'recep')).join('') + '</div>' : vide('Aucune réception en attente.')) +
       '<h2 class="section-title">Livraisons à venir (' + livraisons.length + ')</h2>' +
-      (livraisons.length ? '<div class="list">' + livraisons.map((c) => cmdLigne(c, false)).join('') + '</div>' : vide('Aucune livraison prévue.'));
+      (livraisons.length ? '<div class="list">' + livraisons.map((c) => cmdLigne(c, 'avenir')).join('') + '</div>' : vide('Aucune livraison prévue.'));
   }
 
   function vuePlanning() {
@@ -456,14 +480,16 @@
       '<h2 class="section-title">À planifier (' + aPlanifier.length + ')</h2>' +
       (aPlanifier.length ? '<div class="list">' + aPlanifier.map((d) => ligne(d, {
         titre: nomChantier(d),
-        meta: [esc(nomClient(d)), livraisonsDe(d).length ? livraisonsDe(d).map((c) => 'livraison ' + fr(c.dateLivraison)).join(', ') : 'matériel pas encore commandé'],
+        meta: [esc(nomClient(d)), livraisonsDe(d).length ? livraisonsDe(d).map((c) => esc(c.fournisseur) + ' ' + fr(c.dateLivraison) + ' ' + pillRecep(c)).join(' · ') : 'matériel pas encore commandé'],
         actions: '<button class="btn primary" data-act="planifier" data-id="' + d.id + '">Planifier</button>', retour: true
       })).join('') + '</div>' : vide('Aucun chantier à planifier.')) +
       '<h2 class="section-title">Chantiers planifiés (' + planifies.length + ')</h2>' +
       (planifies.length ? '<div class="list">' + planifies.map((d) => ligne(d, {
         titre: nomChantier(d),
         meta: [fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : ''), esc(nomClient(d)),
-          d.techniciens ? esc(d.techniciens.split(',').map(nomUser).join(', ')) : 'technicien à choisir', pillEtape(d)],
+          d.techniciens ? esc(d.techniciens.split(',').map(nomUser).join(', ')) : 'technicien à choisir', pillEtape(d),
+          livraisonsDe(d).length ? (livraisonsDe(d).every((c) => !recepOuverte(c)) ? '<span class="pill green">Matériel reçu</span>'
+            : '<span class="pill amber">' + livraisonsDe(d).filter(recepOuverte).length + ' réception(s) en attente</span>') : ''],
         extra: '<div class="progress-line" style="margin-top:8px;max-width:320px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div>' + (Number(d.avancement) || 0) + ' %</div>',
         actions: '<a class="btn" href="#/terrain/' + d.id + '">Écran chantier</a><button class="btn" data-act="planifier" data-id="' + d.id + '">Modifier</button>', retour: true
       })).join('') + '</div>' : vide('Aucun chantier planifié.'));
@@ -568,6 +594,7 @@
         '<strong>' + esc(c.fournisseur) + '</strong> <span class="muted small">commandé le ' + fr(c.dateCommande) + '</span>' +
         '<div class="small" style="margin:4px 0 8px">Livraison ' + fr(c.dateLivraison, true) + '</div>' +
         (c.commentaire ? '<div class="small muted" style="margin-bottom:8px">' + esc(c.commentaire) + '</div>' : '') +
+        blocReception(c) +
         '<div class="actions" style="align-items:center"><label class="check"><input type="checkbox" data-arc="' + c.id + '"' + (c.arcControle === 'oui' ? ' checked' : '') + '> ARC contrôlé</label>' +
         (c.arcFichier ? '<a class="small" href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">Voir le PDF</a>' : '') +
         '<label class="btn ghost">' + (c.arcFichier ? 'Remplacer le PDF' : 'Joindre le PDF') + '<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + d.id + '"></label>' +
@@ -601,6 +628,23 @@
       '</div></div>';
   }
 
+  /** Réception d'une commande, dans la fiche et sur l'écran chantier */
+  function blocReception(c) {
+    const st = c.receptionStatut || '';
+    const details = st ? [
+      c.dateReception ? 'le ' + fr(c.dateReception) : '', c.receptionPar ? 'par ' + esc(c.receptionPar) : '',
+      c.numBL ? 'BL ' + esc(c.numBL) : ''
+    ].filter(Boolean).join(' · ') : '';
+    return '<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:0 0 10px">' +
+      '<div class="actions" style="align-items:center;justify-content:space-between"><span><strong class="small">Réception</strong> ' + pillRecep(c) +
+      (details ? ' <span class="muted small">' + details + '</span>' : '') + '</span>' +
+      '<span class="actions">' + (st !== 'conforme' ? btnRecep(c, st ? 'primary' : '') : '') +
+      (st ? '<button class="btn ghost" data-act="annulerReception" data-id="' + c.id + '">Annuler</button>' : '') + '</span></div>' +
+      (c.receptionCommentaire && st ? '<div class="small" style="margin-top:6px;white-space:pre-line">' + esc(c.receptionCommentaire) + '</div>' : '') +
+      (c.receptionPhoto ? '<a class="small" href="https://drive.google.com/file/d/' + esc(c.receptionPhoto) + '/view" target="_blank" rel="noopener">Voir la photo de réception</a>' : '') +
+      '</div>';
+  }
+
   function blocCommentaires(list) {
     if (!list.length) return '<p class="muted">Aucun commentaire pour l\'instant.</p>';
     return list.map((c) =>
@@ -630,7 +674,7 @@
   }
 
   function vueTerrainChantier() {
-    const { dossier: d, commentaires, factures } = S.dossier;
+    const { dossier: d, commentaires, factures, commandes } = S.dossier;
     const pct = Number(d.avancement) || 0;
     const fini = d.etape === 'termine' || d.etape === 'facture';
     const inter = factures.filter((f) => f.type === 'intermediaire');
@@ -641,6 +685,9 @@
       '<div class="card"><h2>Avancement</h2><div class="slider-box"><div class="pct" id="pct-val">' + pct + ' %</div>' +
       '<input type="range" min="0" max="100" step="5" value="' + pct + '" id="pct" aria-label="Avancement du chantier en pourcentage"' + (fini ? ' disabled' : '') + '></div>' +
       '<p class="muted small" style="text-align:center;margin:4px 0 0">Glissez puis relâchez : c\'est enregistré tout seul.</p></div>' +
+      (commandes && commandes.length ? '<div class="card"><h2>Matériel</h2>' + commandes.map((c) =>
+        '<div style="margin-bottom:6px"><strong>' + esc(c.fournisseur) + '</strong> <span class="muted small">livraison ' + fr(c.dateLivraison, true) + '</span></div>' +
+        blocReception(c)).join('') + '</div>' : '') +
       '<div class="card"><h2>Ajouter un commentaire</h2>' +
       '<label class="field"><span class="muted small" style="font-weight:400">Pour dicter, touchez le micro du clavier.</span>' +
       '<textarea id="com-txt" rows="4" placeholder="Ce qui a été fait, ce qui manque, un souci…"></textarea></label>' +
@@ -658,6 +705,7 @@
    * RÉGLAGES
    * ================================================================ */
   const LIB_DELAI = {
+    reception: 'Premier rappel, en jours après la date de livraison prévue (0 = le jour même)',
     devis_a_faire: 'Premier rappel, en jours après le rendez-vous',
     relance_client: 'Délai par défaut, en jours après l\'envoi du devis',
     commande_materiel: 'Premier rappel, en jours après la validation du devis',
@@ -666,6 +714,8 @@
     a_facturer: 'Premier rappel, en jours après la fin du chantier (0 = le jour même)'
   };
   const AIDE_MAIL = {
+    reception: 'Envoyé quand la réception n\'est pas validée à la date de livraison prévue, puis selon le rythme, tant qu\'elle n\'est pas « conforme ».',
+    reception_nc: 'Envoyé tout de suite quand une livraison est déclarée non conforme.',
     nouvelle_commande: 'Envoyé tout de suite quand un devis est validé.',
     livraison: 'Envoyé une seule fois, la veille de chaque livraison.',
     recap: 'Un seul mail qui liste tout ce qui reste à faire.',
@@ -683,8 +733,8 @@
       const jours = String(m.jours || '').split(',');
       const k = m.cle;
       const avecDelai = !!LIB_DELAI[k];
-      const avecRythme = ['nouvelle_commande', 'livraison', 'recap'].indexOf(k) < 0;
-      const avecHoraire = k !== 'nouvelle_commande';
+      const avecRythme = ['nouvelle_commande', 'livraison', 'recap', 'reception_nc'].indexOf(k) < 0;
+      const avecHoraire = ['nouvelle_commande', 'reception_nc'].indexOf(k) < 0;
       const resume = m.active === 'oui'
         ? (avecHoraire ? jours.filter(Boolean).map((j) => LETTRES[Number(j) - 1]).join(' ') + ' à ' + m.heure + ' h' : 'immédiat')
         : 'désactivé';
@@ -727,7 +777,7 @@
 
       '<div class="card"><h2>Mails de rappel</h2>' +
       '<div class="help">Dans l\'objet et le texte, ces mots entre accolades sont remplacés automatiquement : ' +
-      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
+      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'reception', 'receptionne_par', 'numero_bl', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
         .map((x) => '<code>{' + x + '}</code>').join(' ') + '. Un bouton « Ouvrir le dossier » est ajouté en bas de chaque mail.</div>' +
       mails + '<button class="btn primary" data-act="saveMails" style="margin-top:6px">Enregistrer les mails</button></div>' +
 
@@ -960,6 +1010,42 @@
         }
       });
     },
+    reception(id) {
+      const c = S.data.commandes.find((x) => x.id === id);
+      const d = parId(c.dossierId);
+      fenetre({
+        titre: 'Réception du matériel', sousTitre: esc(nomChantier(d)) + ' · ' + esc(c.fournisseur) + ' · attendu le ' + fr(c.dateLivraison),
+        corps: '<div class="choices" role="radiogroup" aria-label="État de la livraison">' +
+          '<label><input type="radio" name="statut" value="conforme"><span>Conforme</span></label>' +
+          '<label><input type="radio" name="statut" value="non_conforme"><span>Non conforme</span></label>' +
+          '<label><input type="radio" name="statut" value="partielle"><span>Partielle</span></label></div>' +
+          '<div data-pane="partielle" hidden>' + champ('Le reste arrive le *', input('nouvelleDate', '', 'date')) + '</div>' +
+          '<div data-pane="non_conforme" hidden><p class="help">La commande reste ouverte, en attente de traitement, et un mail prévient l\'administration.</p></div>' +
+          '<div class="row2">' + champ('Reçu le', input('dateReception', today(), 'date')) + champ('Réceptionné par', input('receptionPar', S.data.user.nom || '')) + '</div>' +
+          champ('N° du bon de livraison', input('numBL', '')) +
+          champ('Commentaire', '<textarea name="commentaire" rows="3" placeholder="Manquant, abîmé, erreur de référence…"></textarea>') +
+          champ('Photo (bon de livraison ou matériel)', '<input type="file" name="photo" accept="image/*,application/pdf">'),
+        bouton: 'Enregistrer la réception',
+        apres: (form) => {
+          form.querySelectorAll('input[name=statut]').forEach((r) => {
+            r.onchange = () => {
+              const t = form.querySelector('input[name=statut]:checked').value;
+              form.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== t; });
+            };
+          });
+        },
+        valider: async (v) => {
+          if (!v.statut) throw new Error('Indiquez si la livraison est conforme, non conforme ou partielle.');
+          if (v.statut === 'partielle' && !v.nouvelleDate) throw new Error('Indiquez quand arrive le reste.');
+          const photo = v.photo && v.photo.size ? v.photo : null;
+          await agir('receptionCommande', {
+            id, statut: v.statut, nouvelleDate: v.nouvelleDate, dateReception: v.dateReception,
+            receptionPar: v.receptionPar, numBL: v.numBL, commentaire: v.commentaire
+          }, { conforme: 'Réception conforme enregistrée', non_conforme: 'Non conformité enregistrée, mail envoyé', partielle: 'Livraison partielle enregistrée' }[v.statut]);
+          if (photo) await televerser(photo, 'reception', c.dossierId, c.id);
+        }
+      });
+    },
     modifFacture(id) {
       const f = S.data.factures.find((x) => x.id === id);
       fenetre({
@@ -1007,22 +1093,26 @@
       img.src = url;
     });
   }
+  /** Envoie un fichier (PDF ou photo) au programme Google */
+  async function televerser(file, type, dossierId, commandeId) {
+    if (file.size > 20 * 1024 * 1024) throw new Error('Fichier trop lourd (20 Mo maximum).');
+    let b64, mime = file.type, nom = file.name;
+    if (file.type.indexOf('image/') === 0) {
+      b64 = await reduirePhoto(file, 1600);
+      mime = 'image/jpeg';
+      nom = ({ arc: 'ARC ', reception: 'Réception ' }[type] || 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
+    }
+    if (!b64) b64 = await lireBase64(file);
+    toast('Envoi en cours…');
+    await agir('envoyerFichier', { dossierId, commandeId: commandeId || '', type, base64: b64, mime, nom },
+      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée' }[type] || 'Photo enregistrée');
+  }
+
   async function envoyerFichier(inp) {
     const file = inp.files && inp.files[0];
     if (!file) return;
-    if (file.size > 20 * 1024 * 1024) { toast('Fichier trop lourd (20 Mo maximum).', true); return; }
-    const type = inp.dataset.upload;
     try {
-      let b64, mime = file.type, nom = file.name;
-      if (file.type.indexOf('image/') === 0) {
-        b64 = await reduirePhoto(file, 1600);
-        mime = 'image/jpeg';
-        nom = (type === 'arc' ? 'ARC ' : 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
-      }
-      if (!b64) b64 = await lireBase64(file);
-      toast('Envoi en cours…');
-      await agir('envoyerFichier', { dossierId: inp.dataset.dossier, commandeId: inp.dataset.cmd || '', type, base64: b64, mime, nom },
-        type === 'arc' ? 'PDF de l\'ARC enregistré' : 'Photo enregistrée');
+      await televerser(file, inp.dataset.upload, inp.dataset.dossier, inp.dataset.cmd);
       await afficher();
     } catch (e) {
       toast(e.message, true);
@@ -1081,6 +1171,9 @@
         (motif) => agir('supprimerCommande', { id: c.id, motif }, 'Commande supprimée'), 'danger');
     },
     modifFacture: (el) => FORMS.modifFacture(el.dataset.id),
+    reception: (el) => FORMS.reception(el.dataset.id),
+    annulerReception: (el) => FORMS.avecMotif('Annuler cette réception ?', 'La commande redevient « à réceptionner ».', 'Annuler la réception',
+      (motif) => agir('annulerReception', { id: el.dataset.id, motif }, 'Réception annulée')),
     supprFacture: (el) => FORMS.avecMotif('Supprimer cette demande de facture ?', 'La demande de facture intermédiaire sera retirée.', 'Supprimer',
       (motif) => agir('supprimerFacture', { id: el.dataset.id, motif }, 'Demande supprimée'), 'danger'),
     annulerFacture: (el) => FORMS.avecMotif('Annuler « facture faite » ?', 'La facture redevient « à faire » et le rappel repartira d\'aujourd\'hui. Si c\'est la facture finale, le dossier revient en « À facturer ».', 'Annuler la facture',
