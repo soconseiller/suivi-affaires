@@ -503,8 +503,11 @@
         return ligne(d, {
           titre: nomChantier(d),
           meta: [f.type === 'finale' ? '<span class="pill amber">Facture finale</span>' : '<span class="pill">Intermédiaire ' + esc(f.pourcentage) + ' %</span>',
-            esc(nomClient(d)), 'Demandée le ' + fr(f.dateDemande) + ' par ' + esc(f.demandePar), d.numCommande ? 'Commande ' + esc(d.numCommande) : ''],
-          note: f.commentaire,
+            esc(nomClient(d)), 'Demandée le ' + fr(f.dateDemande) + ' par ' + esc(f.demandePar), d.numCommande ? 'Commande ' + esc(d.numCommande) : '',
+            f.type === 'finale' ? pillPV(d) : '',
+            f.type === 'finale' ? (S.data.documents || []).filter((x) => x.dossierId === d.id && x.type === 'pv')
+              .map((x, i) => '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">Voir le PV' + (i ? ' (' + (i + 1) + ')' : '') + '</a>').join(' · ') : ''],
+          note: f.type === 'finale' && d.pvStatut === 'avec_reserves' && d.pvReserves ? 'Réserves : ' + d.pvReserves : f.commentaire,
           actions: '<button class="btn green" data-act="factureFaite" data-id="' + f.id + '">Facture faite</button>' +
             (f.type === 'finale' ? btnRetour(d) : '<button class="btn ghost" data-act="modifFacture" data-id="' + f.id + '">Modifier</button>')
         });
@@ -610,6 +613,8 @@
         ['Terminé le', fr(d.dateFinChantier)]
       ]) + '<div class="progress-line" style="margin:12px 0 4px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div>'
         : '<p class="muted">Pas encore planifié.</p>') + '</div>' +
+      (['en_cours', 'termine', 'facture'].indexOf(d.etape) >= 0 || d.pvStatut || (S.dossier.documents || []).length
+        ? '<div class="card"><h2>PV de réception</h2>' + blocPV(d, S.dossier.documents || []) + '</div>' : '') +
       '<div class="card"><h2>Factures</h2>' + (factures.length ? '<ul class="mini-list">' + factures.map((f) =>
         '<li><span>' + (f.type === 'finale' ? 'Facture finale' : 'Intermédiaire ' + esc(f.pourcentage) + ' %') + '<br><span class="muted small">demandée le ' + fr(f.dateDemande) + (f.commentaire ? ' · ' + esc(f.commentaire) : '') + '</span></span>' +
         '<span class="actions" style="justify-content:flex-end">' +
@@ -626,6 +631,31 @@
       '<div class="actions">' + (btnRetour(d) ? btnRetour(d).replace('btn ghost', 'btn') : '<span class="muted small">Première étape : pas de retour possible.</span>') +
       '<button class="btn danger" data-act="supprDossier" data-id="' + d.id + '">Supprimer le dossier</button></div></div>' +
       '</div></div>';
+  }
+
+  /* PV de réception du chantier */
+  const LIB_PV = { sans_reserves: 'Sans réserves', avec_reserves: 'Avec réserves' };
+  function pillPV(d) {
+    if (!d.pvStatut) return '<span class="pill grey">Pas encore de PV</span>';
+    return '<span class="pill ' + (d.pvStatut === 'avec_reserves' ? 'amber' : 'green') + '">PV ' + LIB_PV[d.pvStatut].toLowerCase() + '</span>';
+  }
+  const lienDrive = (id) => 'https://drive.google.com/file/d/' + esc(id) + '/view';
+  const estImage = (doc) => /^image\//.test(doc.mime || '') || /\.(jpe?g|png|heic|webp)$/i.test(doc.nom || '');
+
+  function blocPV(d, docs) {
+    const pv = docs.filter((x) => x.type === 'pv');
+    const res = docs.filter((x) => x.type === 'reserve');
+    const vignette = (x) => '<div class="doc">' +
+      '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">' +
+      (estImage(x) ? '<img src="https://drive.google.com/thumbnail?id=' + esc(x.fichier) + '&sz=w320" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=doc-ico>Photo</span>\'">' : '<span class="doc-ico">PDF</span>') +
+      '<span class="doc-nom">' + esc(x.nom || 'Document') + '</span></a>' +
+      '<button class="link danger" data-act="supprDoc" data-id="' + x.id + '">retirer</button></div>';
+    return '<div class="actions" style="align-items:center;margin-bottom:10px">' + pillPV(d) +
+      (d.pvDate ? '<span class="muted small">le ' + fr(d.pvDate) + '</span>' : '') + '</div>' +
+      (d.pvStatut === 'avec_reserves' && d.pvReserves ? '<div class="help" style="white-space:pre-line"><strong>Réserves :</strong> ' + esc(d.pvReserves) + '</div>' : '') +
+      (pv.length ? '<div class="docs">' + pv.map(vignette).join('') + '</div>' : '') +
+      (res.length ? '<div class="small muted" style="margin:10px 0 6px">Photos des réserves</div><div class="docs">' + res.map(vignette).join('') + '</div>' : '') +
+      '<div class="actions" style="margin-top:10px"><button class="btn" data-act="pv" data-id="' + d.id + '">' + (d.pvStatut || docs.length ? 'Compléter le PV' : 'Joindre le PV') + '</button></div>';
   }
 
   /** Réception d'une commande, dans la fiche et sur l'écran chantier */
@@ -698,6 +728,7 @@
         '<button class="btn green big" data-act="termine" data-id="' + d.id + '">Chantier terminé</button></div>' +
         (inter.length ? '<p class="muted small" style="margin-bottom:0">Déjà demandé : ' + inter.map((f) => esc(f.pourcentage) + ' %' + (f.faite === 'oui' ? ' (facturé)' : '')).join(', ') + '</p>' : '') + '</div>'
         : '<div class="card"><p style="margin:0"><span class="pill green">Chantier terminé</span> ' + (d.dateFinChantier ? 'le ' + fr(d.dateFinChantier) : '') + '</p></div>') +
+      '<div class="card"><h2>PV de réception</h2>' + blocPV(d, S.dossier.documents || []) + '</div>' +
       '<div class="card"><h2>Historique du chantier</h2>' + blocCommentaires(commentaires) + '</div>';
   }
 
@@ -716,11 +747,12 @@
   const AIDE_MAIL = {
     reception: 'Envoyé quand la réception n\'est pas validée à la date de livraison prévue, puis selon le rythme, tant qu\'elle n\'est pas « conforme ».',
     reception_nc: 'Envoyé tout de suite quand une livraison est déclarée non conforme.',
+    pv_reserves: 'Envoyé tout de suite quand un PV avec réserves est enregistré. Le PV et les photos sont joints.',
+    a_facturer: 'Envoyé tout de suite quand le chantier est terminé, puis relancé selon le rythme. Les documents du PV sont joints.',
     nouvelle_commande: 'Envoyé tout de suite quand un devis est validé.',
     livraison: 'Envoyé une seule fois, la veille de chaque livraison.',
     recap: 'Un seul mail qui liste tout ce qui reste à faire.',
-    facture_inter: 'Envoyé tout de suite à la demande du technicien, puis relancé selon le rythme.',
-    a_facturer: 'Envoyé tout de suite quand le chantier est terminé, puis relancé selon le rythme.'
+    facture_inter: 'Envoyé tout de suite à la demande du technicien, puis relancé selon le rythme.'
   };
   const LETTRES = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
@@ -733,8 +765,9 @@
       const jours = String(m.jours || '').split(',');
       const k = m.cle;
       const avecDelai = !!LIB_DELAI[k];
-      const avecRythme = ['nouvelle_commande', 'livraison', 'recap', 'reception_nc'].indexOf(k) < 0;
-      const avecHoraire = ['nouvelle_commande', 'reception_nc'].indexOf(k) < 0;
+      const avecRythme = ['nouvelle_commande', 'livraison', 'recap', 'reception_nc', 'pv_reserves'].indexOf(k) < 0;
+      const avecHoraire = ['nouvelle_commande', 'reception_nc', 'pv_reserves'].indexOf(k) < 0;
+      const avecCopie = ['pv_reserves', 'reception_nc', 'a_facturer', 'facture_inter'].indexOf(k) >= 0;
       const resume = m.active === 'oui'
         ? (avecHoraire ? jours.filter(Boolean).map((j) => LETTRES[Number(j) - 1]).join(' ') + ' à ' + m.heure + ' h' : 'immédiat')
         : 'désactivé';
@@ -752,6 +785,7 @@
           '<label class="field"><span>Heure d\'envoi</span><select name="heure">' + heures(m.heure) + '</select><small>Le mail part dans l\'heure choisie.</small></label></div>' : '') +
         '<label class="field"><span>Objet du mail</span><input type="text" name="objet" value="' + esc(m.objet) + '"></label>' +
         '<label class="field"><span>Texte du mail</span><textarea name="texte" rows="5">' + esc(m.texte) + '</textarea></label>' +
+        (avecCopie ? '<label class="check" style="margin:-4px 0 14px"><input type="checkbox" name="copieTechniciens"' + (m.copieTechniciens === 'oui' ? ' checked' : '') + '> Envoyer aussi aux techniciens du chantier</label>' : '') +
         '<button type="button" class="btn" data-act="mailTest" data-cle="' + k + '">M\'envoyer un essai</button>' +
         '</div></details>';
     }).join('');
@@ -777,7 +811,7 @@
 
       '<div class="card"><h2>Mails de rappel</h2>' +
       '<div class="help">Dans l\'objet et le texte, ces mots entre accolades sont remplacés automatiquement : ' +
-      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'reception', 'receptionne_par', 'numero_bl', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
+      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'reception', 'receptionne_par', 'numero_bl', 'pv', 'reserves', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
         .map((x) => '<code>{' + x + '}</code>').join(' ') + '. Un bouton « Ouvrir le dossier » est ajouté en bas de chaque mail.</div>' +
       mails + '<button class="btn primary" data-act="saveMails" style="margin-top:6px">Enregistrer les mails</button></div>' +
 
@@ -835,6 +869,44 @@
 
   const champ = (label, html, aide) => '<label class="field"><span>' + label + '</span>' + html + (aide ? '<small>' + aide + '</small>' : '') + '</label>';
   const input = (name, value, type, attrs) => '<input type="' + (type || 'text') + '" name="' + name + '" value="' + esc(value || '') + '" ' + (attrs || '') + '>';
+
+  /* Champs communs du PV : choix sans / avec réserves, fichiers, détail des réserves */
+  function champsPV(avecAucun, d) {
+    const st = (d && d.pvStatut) || '';
+    const radio = (val, label) => '<label><input type="radio" name="pvStatut" value="' + val + '"' + (st === val || (!st && !val) ? ' checked' : '') + '><span>' + label + '</span></label>';
+    return '<div class="choices" role="radiogroup" aria-label="PV de réception">' +
+      (avecAucun ? radio('', 'Pas de PV') : '') + radio('sans_reserves', 'Sans réserves') + radio('avec_reserves', 'Avec réserves') + '</div>' +
+      '<div data-pv="fichiers"' + (avecAucun ? ' hidden' : '') + '>' +
+      champ('PV signé (photos ou fichiers)', '<input type="file" name="pvFichiers" accept="image/*,application/pdf" multiple>', 'Vous pouvez en choisir plusieurs : par exemple le recto et le verso.') + '</div>' +
+      '<div data-pv="reserves"' + (st === 'avec_reserves' ? '' : ' hidden') + '>' +
+      champ('Détail des réserves', '<textarea name="reserves" rows="3" placeholder="Ce que le client a noté…">' + esc((d && d.pvReserves) || '') + '</textarea>') +
+      champ('Photos des réserves', '<input type="file" name="reserveFichiers" accept="image/*" multiple>') +
+      '<p class="muted small">Un mail part tout de suite, avec le PV et les photos.</p></div>';
+  }
+  function brancherPV(form) {
+    const maj = () => {
+      const r = form.querySelector('input[name=pvStatut]:checked');
+      const t = r ? r.value : '';
+      form.querySelector('[data-pv=fichiers]').hidden = !t;
+      form.querySelector('[data-pv=reserves]').hidden = t !== 'avec_reserves';
+    };
+    form.querySelectorAll('input[name=pvStatut]').forEach((r) => { r.onchange = maj; });
+    maj();
+  }
+  function lirePV(v, form, facultatif) {
+    const statut = v.pvStatut || '';
+    if (!facultatif && !statut) throw new Error('Indiquez si le PV est sans réserves ou avec réserves.');
+    const pv = Array.from(form.querySelector('input[name=pvFichiers]').files || []);
+    const res = statut === 'avec_reserves' ? Array.from(form.querySelector('input[name=reserveFichiers]').files || []) : [];
+    return { statut, reserves: statut === 'avec_reserves' ? (v.reserves || '') : '', pv: statut ? pv : [], res };
+  }
+  async function envoyerFichiersPV(dossierId, pv) {
+    const tous = pv.pv.map((f) => ['pv', f]).concat(pv.res.map((f) => ['reserve', f]));
+    for (let i = 0; i < tous.length; i++) {
+      toast('Envoi du document ' + (i + 1) + ' sur ' + tous.length + '…');
+      await televerser(tous[i][1], tous[i][0], dossierId);
+    }
+  }
 
   const FORMS = {
     devisFait(id) {
@@ -961,10 +1033,31 @@
       const d = S.dossier ? S.dossier.dossier : parId(id);
       fenetre({
         titre: 'Chantier terminé ?', sousTitre: esc(nomChantier(d)),
-        corps: '<p>L\'avancement passera à 100 % et un mail préviendra qu\'il faut facturer.</p>' + champ('Commentaire de fin (facultatif)', '<textarea name="commentaire" rows="3"></textarea>'),
+        corps: '<p>L\'avancement passera à 100 % et un mail préviendra qu\'il faut facturer.</p>' +
+          champ('Commentaire de fin (facultatif)', '<textarea name="commentaire" rows="3"></textarea>') +
+          '<h3 style="font-size:15px;margin:18px 0 10px;color:var(--navy)">PV de réception (facultatif)</h3>' + champsPV(true),
         bouton: 'Oui, chantier terminé', classe: 'green',
-        valider: async (v) => {
-          await agir('chantierTermine', { id, commentaire: v.commentaire }, 'Chantier terminé, facturation prévenue');
+        apres: brancherPV,
+        valider: async (v, form) => {
+          const pv = lirePV(v, form, true);
+          await envoyerFichiersPV(d.id, pv);
+          await agir('chantierTermine', { id, commentaire: v.commentaire, pvStatut: pv.statut, reserves: pv.reserves },
+            pv.statut === 'avec_reserves' ? 'Chantier terminé, réserves signalées par mail' : 'Chantier terminé, facturation prévenue');
+        }
+      });
+    },
+    pv(id) {
+      const d = S.dossier && S.dossier.dossier.id === id ? S.dossier.dossier : parId(id);
+      fenetre({
+        titre: 'PV de réception', sousTitre: esc(nomChantier(d)) + ' · vous pouvez ajouter des documents à ceux déjà joints',
+        corps: champsPV(false, d),
+        bouton: 'Enregistrer le PV',
+        apres: brancherPV,
+        valider: async (v, form) => {
+          const pv = lirePV(v, form, false);
+          await envoyerFichiersPV(d.id, pv);
+          await agir('enregistrerPV', { id, pvStatut: pv.statut, reserves: pv.reserves },
+            pv.statut === 'avec_reserves' ? 'PV enregistré, réserves signalées par mail' : 'PV enregistré');
         }
       });
     },
@@ -1100,12 +1193,12 @@
     if (file.type.indexOf('image/') === 0) {
       b64 = await reduirePhoto(file, 1600);
       mime = 'image/jpeg';
-      nom = ({ arc: 'ARC ', reception: 'Réception ' }[type] || 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
+      nom = ({ arc: 'ARC ', reception: 'Réception ', pv: 'PV ', reserve: 'Réserve ' }[type] || 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
     }
     if (!b64) b64 = await lireBase64(file);
     toast('Envoi en cours…');
     await agir('envoyerFichier', { dossierId, commandeId: commandeId || '', type, base64: b64, mime, nom },
-      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée' }[type] || 'Photo enregistrée');
+      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée', pv: 'Document du PV enregistré', reserve: 'Photo de réserve enregistrée' }[type] || 'Photo enregistrée');
   }
 
   async function envoyerFichier(inp) {
@@ -1182,10 +1275,14 @@
     supprCom: (el) => FORMS.confirmer('Supprimer ce commentaire ?', 'Le commentaire (et la photo, s\'il y en a une) ne sera plus affiché. La photo reste dans Google Drive.', 'Supprimer',
       () => agir('supprimerCommentaire', { id: el.dataset.id }, 'Commentaire supprimé'), 'danger'),
     termine: (el) => FORMS.termine(el.dataset.id),
+    pv: (el) => FORMS.pv(el.dataset.id),
+    supprDoc: (el) => FORMS.confirmer('Retirer ce document ?', 'Il ne sera plus affiché dans le dossier. Le fichier part dans la corbeille Google Drive, où il reste récupérable pendant 30 jours.', 'Retirer',
+      () => agir('supprimerDocument', { id: el.dataset.id }, 'Document retiré'), 'danger'),
     saveMails: () => essayer(async () => {
       const mails = Array.from(document.querySelectorAll('details.mail')).map((box) => {
         const g = (n) => box.querySelector('[name=' + n + ']');
         const m = { cle: box.dataset.mail, active: g('active').checked ? 'oui' : 'non', destinataires: g('destinataires').value.trim(), objet: g('objet').value, texte: g('texte').value };
+        if (g('copieTechniciens')) m.copieTechniciens = g('copieTechniciens').checked ? 'oui' : 'non';
         if (g('delaiJours')) m.delaiJours = g('delaiJours').value || '0';
         if (g('rythmeJours')) m.rythmeJours = g('rythmeJours').value || '1';
         if (g('heure')) {
