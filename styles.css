@@ -172,7 +172,7 @@ a.item-title:hover { color: var(--navy); text-decoration: underline; }
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: var(--ink); }
 .field small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; font-weight: 400; }
-input[type=text], input[type=email], input[type=number], input[type=date], select, textarea {
+input[type=text], input[type=email], input[type=number], input[type=date], input[type=search], select, textarea {
   width: 100%; font: inherit; color: var(--ink); background: #fff; border: 1px solid #CFD4DE; border-radius: 8px; padding: 9px 11px; min-height: 40px;
 }
 textarea { resize: vertical; min-height: 90px; }
@@ -279,3 +279,13 @@ input[type=range] { width: 100%; height: 36px; accent-color: var(--green); }
 .doc .doc-liens { display: flex; gap: 10px; margin: 0 8px 6px; }
 .doc .doc-liens .link { margin: 0; }
 .doc .doc-type { font-weight: 600; color: var(--navy); }
+
+/* Loupe du tableau de bord */
+.loupe { position: relative; margin: 0 0 20px; }
+.loupe-ico { position: absolute; left: 14px; top: 13px; color: var(--muted); pointer-events: none; }
+.loupe input { padding: 12px 14px 12px 44px; min-height: 46px; font-size: 15px; border-radius: 10px; box-shadow: var(--shadow); }
+.loupe-res { position: absolute; left: 0; right: 0; top: calc(100% + 6px); background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(27,42,74,.15); z-index: 15; max-height: 420px; overflow-y: auto; }
+.loupe-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 14px; text-decoration: none; color: var(--ink); border-bottom: 1px solid var(--line); }
+.loupe-item:last-child { border-bottom: 0; }
+.loupe-item:hover, .loupe-item:focus { background: var(--navy-soft); outline: none; }
+.loupe-vide { padding: 14px; color: var(--muted); font-size: 14px; }

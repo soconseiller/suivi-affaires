@@ -357,6 +357,9 @@
     return '<div class="page-head"><div><h1>' + (h < 18 ? 'Bonjour' : 'Bonsoir') + ' ' + esc((u.nom || '').split(' ')[0]) + '</h1>' +
       '<p>' + fr(t, true) + ' · ' + ds.filter(ouvert).length + ' dossiers ouverts</p></div>' +
       '<div class="actions"><button class="btn" data-act="nouveau">+ Nouveau dossier</button><button class="btn" data-act="scan">Lire l\'agenda maintenant</button></div></div>' +
+      '<div class="loupe"><svg class="loupe-ico" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+      '<input type="search" id="loupe" placeholder="Rechercher un dossier : client, chantier, n° de devis ou de commande, document…" autocomplete="off" aria-label="Rechercher un dossier">' +
+      '<div id="loupe-res" class="loupe-res" hidden></div></div>' +
       '<div class="stats">' +
       stat('#/devis', c.devis, 'Devis à faire', c.devisRetard, 'en retard') +
       stat('#/relances', c.relances, 'Devis en attente', c.relancesDues, 'à relancer') +
@@ -1435,6 +1438,31 @@
   };
 
   function apresAffichage(page) {
+    if (page === '') {
+      const inp = $('#loupe');
+      const box = $('#loupe-res');
+      const chercher = () => {
+        const q = sansAccent(inp.value).trim();
+        if (!q) { box.hidden = true; box.innerHTML = ''; return; }
+        const docsDe = (d) => (S.data.documents || []).filter((x) => x.dossierId === d.id);
+        const res = S.data.dossiers.filter((d) => sansAccent([d.client, d.titreRdv, d.chantier, d.numDevis, d.numCommande, d.lieu]
+          .concat(docsDe(d).map((x) => x.nom)).join(' ')).indexOf(q) >= 0)
+          .sort((a, b) => (ouvert(b) - ouvert(a)) || ((b.majLe || '') > (a.majLe || '') ? 1 : -1)).slice(0, 12);
+        box.innerHTML = res.length ? res.map((d) => {
+          const doc = docsDe(d).find((x) => sansAccent(x.nom).indexOf(q) >= 0);
+          return '<a class="loupe-item" href="#/dossier/' + d.id + '"><span><strong>' + esc(nomClient(d)) + '</strong>' +
+            (d.chantier && d.chantier !== nomClient(d) ? ' · ' + esc(d.chantier) : '') +
+            '<span class="muted small">' + [d.numDevis && 'Devis ' + esc(d.numDevis), d.numCommande && 'Commande ' + esc(d.numCommande), d.lieu && esc(d.lieu),
+              doc ? 'document « ' + esc(doc.nom) + ' »' : ''].filter(Boolean).map((x) => ' · ' + x).join('') + '</span></span>' + pillEtape(d) + '</a>';
+        }).join('') : '<div class="loupe-vide">Aucun dossier ne correspond.</div>';
+        box.hidden = false;
+      };
+      inp.oninput = chercher;
+      inp.onkeydown = (ev) => {
+        if (ev.key === 'Enter') { const a = box.querySelector('a'); if (a) location.hash = a.getAttribute('href'); }
+        if (ev.key === 'Escape') { inp.value = ''; chercher(); }
+      };
+    }
     if (page === 'archives') {
       const s = $('#search');
       resultatsRecherche('');
