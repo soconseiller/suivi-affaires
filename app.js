@@ -238,7 +238,7 @@
       lien('#/facturer', 'À facturer', c.factures, c.factures) +
       lien('#/archives', 'Archives') +
       '<div class="nav-sep"></div>' +
-      lien('#/terrain', 'Écran chantier') +
+      lien('#/terrain', 'Infos chantiers') +
       (estAdmin() ? lien('#/reglages', 'Réglages') : '') +
       '<div class="nav-user">' + esc(u.nom || u.email) + '<br><button type="button" data-act="logout">Se déconnecter</button>' +
       '<div style="margin-top:10px;font-size:11px;opacity:.6">par So Conseiller</div></div>';
@@ -491,7 +491,7 @@
           livraisonsDe(d).length ? (livraisonsDe(d).every((c) => !recepOuverte(c)) ? '<span class="pill green">Matériel reçu</span>'
             : '<span class="pill amber">' + livraisonsDe(d).filter(recepOuverte).length + ' réception(s) en attente</span>') : ''],
         extra: '<div class="progress-line" style="margin-top:8px;max-width:320px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div>' + (Number(d.avancement) || 0) + ' %</div>',
-        actions: '<a class="btn" href="#/terrain/' + d.id + '">Écran chantier</a><button class="btn" data-act="planifier" data-id="' + d.id + '">Modifier</button>', retour: true
+        actions: '<a class="btn" href="#/terrain/' + d.id + '">Infos chantier</a><button class="btn" data-act="planifier" data-id="' + d.id + '">Modifier</button>', retour: true
       })).join('') + '</div>' : vide('Aucun chantier planifié.'));
   }
 
@@ -557,7 +557,7 @@
       case 'devis_envoye': actions = '<button class="btn primary" data-act="reponse" data-id="' + d.id + '">Réponse du client</button>'; break;
       case 'commande': actions = '<button class="btn primary" data-act="commande" data-id="' + d.id + '">Commande matériel passée</button><button class="btn" data-act="planifier" data-id="' + d.id + '">Planifier</button>'; break;
       case 'materiel': actions = '<button class="btn primary" data-act="planifier" data-id="' + d.id + '">Planifier le chantier</button><button class="btn" data-act="commande" data-id="' + d.id + '">Autre commande</button>'; break;
-      case 'planifie': case 'en_cours': actions = '<a class="btn primary" href="#/terrain/' + d.id + '">Écran chantier</a><button class="btn" data-act="commande" data-id="' + d.id + '">Autre commande</button>'; break;
+      case 'planifie': case 'en_cours': actions = '<a class="btn primary" href="#/terrain/' + d.id + '">Infos chantier</a><button class="btn" data-act="commande" data-id="' + d.id + '">Autre commande</button>'; break;
       case 'termine': {
         const ff = factures.find((f) => f.type === 'finale' && f.faite !== 'oui');
         if (ff) actions = '<button class="btn green" data-act="factureFaite" data-id="' + ff.id + '">Facture finale faite</button>';
@@ -698,7 +698,7 @@
     const carte = (d) => '<a class="terrain-card" href="#/terrain/' + d.id + '"><div class="t">' + esc(nomChantier(d)) + '</div>' +
       '<div class="when">' + (d.dateDebut ? fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '') : 'date à définir') + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</div>' +
       '<div class="progress-line"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div></a>';
-    return '<div class="page-head"><div><h1>Mes chantiers</h1><p>Touchez un chantier pour noter l\'avancement.</p></div></div>' +
+    return '<div class="page-head"><div><h1>Infos chantiers</h1><p>Touchez un chantier pour noter l\'avancement.</p></div></div>' +
       (miens.length ? miens.map(carte).join('') : (autres.length ? '' : vide('Aucun chantier planifié pour l\'instant.'))) +
       (autres.length ? '<h2 class="section-title">' + (miens.length ? 'Autres chantiers' : 'Chantiers planifiés') + '</h2>' + autres.map(carte).join('') : '');
   }
@@ -708,7 +708,7 @@
     const pct = Number(d.avancement) || 0;
     const fini = d.etape === 'termine' || d.etape === 'facture';
     const inter = factures.filter((f) => f.type === 'intermediaire');
-    return '<a class="back" href="#/terrain">← Mes chantiers</a>' +
+    return '<a class="back" href="#/terrain">← Infos chantiers</a>' +
       '<div class="page-head"><div><h1>' + esc(nomChantier(d)) + '</h1><p>' + esc(nomClient(d)) +
       (d.lieu ? ' · <a href="https://maps.google.com/?q=' + encodeURIComponent(d.lieu) + '" target="_blank" rel="noopener">' + esc(d.lieu) + '</a>' : '') +
       (d.dateDebut ? '<br>' + fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '') : '') + '</p></div></div>' +
@@ -736,6 +736,7 @@
    * RÉGLAGES
    * ================================================================ */
   const LIB_DELAI = {
+    livraison: 'Prévenir combien de jours avant la livraison (0 = le jour même)',
     reception: 'Premier rappel, en jours après la date de livraison prévue (0 = le jour même)',
     devis_a_faire: 'Premier rappel, en jours après le rendez-vous',
     relance_client: 'Délai par défaut, en jours après l\'envoi du devis',
@@ -750,7 +751,7 @@
     pv_reserves: 'Envoyé tout de suite quand un PV avec réserves est enregistré. Le PV et les photos sont joints.',
     a_facturer: 'Envoyé tout de suite quand le chantier est terminé, puis relancé selon le rythme. Les documents du PV sont joints.',
     nouvelle_commande: 'Envoyé tout de suite quand un devis est validé.',
-    livraison: 'Envoyé une seule fois, la veille de chaque livraison.',
+    livraison: 'Envoyé une seule fois par livraison, le nombre de jours choisi avant la date prévue.',
     recap: 'Un seul mail qui liste tout ce qui reste à faire.',
     facture_inter: 'Envoyé tout de suite à la demande du technicien, puis relancé selon le rythme.'
   };
@@ -811,7 +812,7 @@
 
       '<div class="card"><h2>Mails de rappel</h2>' +
       '<div class="help">Dans l\'objet et le texte, ces mots entre accolades sont remplacés automatiquement : ' +
-      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'reception', 'receptionne_par', 'numero_bl', 'pv', 'reserves', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
+      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'quand', 'reception', 'receptionne_par', 'numero_bl', 'pv', 'reserves', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
         .map((x) => '<code>{' + x + '}</code>').join(' ') + '. Un bouton « Ouvrir le dossier » est ajouté en bas de chaque mail.</div>' +
       mails + '<button class="btn primary" data-act="saveMails" style="margin-top:6px">Enregistrer les mails</button></div>' +
 
