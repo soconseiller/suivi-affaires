@@ -289,3 +289,13 @@ input[type=range] { width: 100%; height: 36px; accent-color: var(--green); }
 .loupe-item:last-child { border-bottom: 0; }
 .loupe-item:hover, .loupe-item:focus { background: var(--navy-soft); outline: none; }
 .loupe-vide { padding: 14px; color: var(--muted); font-size: 14px; }
+
+/* Planning : périodes d'intervention */
+.interv-ligne { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--bg); }
+.interv-haut { display: grid; grid-template-columns: 1fr 140px auto; gap: 8px; margin-bottom: 8px; }
+.interv-ligne textarea { min-height: 56px; }
+input[type=time] { font: inherit; border: 1px solid #CFD4DE; border-radius: 8px; padding: 8px 10px; min-height: 40px; background: #fff; color: var(--ink); }
+.manques { margin: 0; padding-left: 20px; }
+.manques li { margin: 6px 0; }
+.mini-list.interv li { padding: 10px 0; }
+@media (max-width: 860px) { .interv-haut { grid-template-columns: 1fr 1fr auto; } }
