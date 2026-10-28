@@ -275,3 +275,7 @@ input[type=range] { width: 100%; height: 36px; accent-color: var(--green); }
 .doc .doc-nom { font-size: 12px; padding: 6px 8px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc .link { align-self: flex-start; margin: 0 8px 6px; }
 .modal h3 { font-weight: 600; }
+.doc[hidden], .docs[hidden] { display: none; }
+.doc .doc-liens { display: flex; gap: 10px; margin: 0 8px 6px; }
+.doc .doc-liens .link { margin: 0; }
+.doc .doc-type { font-weight: 600; color: var(--navy); }

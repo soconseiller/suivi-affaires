@@ -517,20 +517,22 @@
   function vueArchives() {
     return '<div class="page-head"><div><h1>Archives</h1><p>Dossiers facturés, devis refusés et rendez-vous ignorés.</p></div></div>' +
       '<div class="card" style="margin-bottom:16px"><label class="field" style="margin:0"><span>Rechercher</span>' +
-      '<input type="text" id="search" placeholder="Client, numéro de devis, numéro de commande, chantier…" autocomplete="off"></label></div>' +
+      '<input type="text" id="search" placeholder="Client, numéro de devis, numéro de commande, chantier, nom de document…" autocomplete="off"></label></div>' +
       '<div id="search-results"></div>';
   }
   function resultatsRecherche(q) {
     const n = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     const qq = n(q).trim();
     let ds = S.data.dossiers.slice();
-    if (qq) ds = ds.filter((d) => n([d.client, d.titreRdv, d.numDevis, d.numCommande, d.chantier, d.lieu].join(' ')).indexOf(qq) >= 0);
+    const docsDe = (d) => (S.data.documents || []).filter((x) => x.dossierId === d.id);
+    if (qq) ds = ds.filter((d) => n([d.client, d.titreRdv, d.numDevis, d.numCommande, d.chantier, d.lieu].concat(docsDe(d).map((x) => x.nom)).join(' ')).indexOf(qq) >= 0);
     else ds = ds.filter((d) => !ouvert(d));
     ds.sort((a, b) => ((b.dateCloture || b.majLe || '') > (a.dateCloture || a.majLe || '') ? 1 : -1));
     $('#search-results').innerHTML = ds.length
       ? '<div class="list">' + ds.slice(0, 100).map((d) => ligne(d, {
         meta: [pillEtape(d), d.numDevis && 'Devis ' + esc(d.numDevis), d.numCommande && 'Commande ' + esc(d.numCommande), d.chantier && esc(d.chantier),
-          d.motifRefus && 'Motif : ' + esc(d.motifRefus), d.dateCloture && 'Clos le ' + fr(d.dateCloture)],
+          d.motifRefus && 'Motif : ' + esc(d.motifRefus), d.dateCloture && 'Clos le ' + fr(d.dateCloture),
+          qq ? docsDe(d).filter((x) => n(x.nom).indexOf(qq) >= 0).map((x) => '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">📄 ' + esc(x.nom) + '</a>').join(' · ') : ''],
         retour: !ouvert(d)
       })).join('') + '</div>'
       : vide(qq ? 'Aucun dossier ne correspond.' : 'Aucun dossier archivé.');
@@ -625,6 +627,7 @@
             (f.type === 'intermediaire' ? '<button class="btn ghost" data-act="modifFacture" data-id="' + f.id + '">Modifier</button><button class="btn ghost danger" data-act="supprFacture" data-id="' + f.id + '">Supprimer</button>' : '')) +
         '</span></li>').join('') + '</ul>'
         : '<p class="muted">Aucune facture demandée.</p>') + '</div>' +
+      '<div class="card"><h2>Documents</h2>' + blocDocuments(d, S.dossier.documents || []) + '</div>' +
       '<div class="card"><h2>Commentaires et photos du chantier</h2>' + blocCommentaires(commentaires) + '</div>' +
       '<div class="card"><h2>Historique</h2><ul class="history">' + historique.map((h) =>
         '<li><span class="when">' + fr(h.date) + '</span><span><strong>' + esc(h.action) + '</strong>' + (h.note ? ' – ' + esc(h.note) : '') + ' <span class="muted">· ' + esc(h.qui) + '</span></span></li>').join('') + '</ul></div>' +
@@ -643,11 +646,38 @@
   const lienDrive = (id) => 'https://drive.google.com/file/d/' + esc(id) + '/view';
   const estImage = (doc) => /^image\//.test(doc.mime || '') || /\.(jpe?g|png|heic|webp)$/i.test(doc.nom || '');
 
-  const vignette = (x) => '<div class="doc">' +
+  /** Libellé court du type de fichier : PDF, DOC, XLS… */
+  function typeDoc(x) {
+    const m = (x.nom || '').match(/\.([a-z0-9]{2,4})$/i);
+    if (m) return m[1].toUpperCase();
+    const mime = x.mime || '';
+    if (/pdf/.test(mime)) return 'PDF';
+    if (/word|document/.test(mime)) return 'DOC';
+    if (/sheet|excel/.test(mime)) return 'XLS';
+    if (/^image\//.test(mime)) return 'Photo';
+    return 'Fichier';
+  }
+  const vignette = (x) => '<div class="doc" data-nom="' + esc(sansAccent(x.nom)) + '">' +
       '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">' +
-      (estImage(x) ? '<img src="https://drive.google.com/thumbnail?id=' + esc(x.fichier) + '&sz=w320" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=doc-ico>Photo</span>\'">' : '<span class="doc-ico">' + esc(((x.nom || '').match(/\.([a-z0-9]{2,4})$/i) || [0, 'DOC'])[1].toUpperCase()) + '</span>') +
+      (estImage(x) ? '<img src="https://drive.google.com/thumbnail?id=' + esc(x.fichier) + '&sz=w320" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=doc-ico>Photo</span>\'">' : '<span class="doc-ico">' + esc(typeDoc(x)) + '</span>') +
       '<span class="doc-nom">' + esc(x.nom || 'Document') + '</span></a>' +
-      '<button class="link danger" data-act="supprDoc" data-id="' + x.id + '">retirer</button></div>';
+      '<span class="doc-liens"><button class="link" data-act="renommerDoc" data-id="' + x.id + '">renommer</button>' +
+      '<button class="link danger" data-act="supprDoc" data-id="' + x.id + '">retirer</button></span></div>';
+  const sansAccent = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const LIB_TYPE_DOC = { devis: 'Devis', pv: 'PV', reserve: 'Réserve', divers: 'Document' };
+
+  /** Tous les documents du dossier, avec recherche par nom */
+  function blocDocuments(d, docs) {
+    const autres = docs.filter((x) => x.type === 'divers');
+    const lies = docs.filter((x) => x.type !== 'divers');
+    return (docs.length > 1 ? '<input type="text" class="doc-search" data-docsearch placeholder="Rechercher un document par son nom…" autocomplete="off" style="margin-bottom:12px">' : '') +
+      (autres.length ? '<div class="docs">' + autres.map(vignette).join('') + '</div>' : '<p class="muted small" style="margin-top:0">Aucun document déposé.</p>') +
+      (lies.length ? '<div class="small muted" style="margin:14px 0 6px">Aussi dans ce dossier (devis, PV)</div><div class="docs">' +
+        lies.map((x) => vignette(Object.assign({}, x, { nom: x.nom }))
+          .replace('<span class="doc-nom">', '<span class="doc-nom"><span class="doc-type">' + LIB_TYPE_DOC[x.type] + '</span> ')).join('') + '</div>' : '') +
+      '<p class="muted small doc-vide" hidden>Aucun document ne correspond.</p>' +
+      '<div class="actions" style="margin-top:12px"><button class="btn" data-act="deposer" data-id="' + d.id + '">+ Déposer des documents ou photos</button></div>';
+  }
 
   /** Documents joints au devis (devis signé, annexes, plans…) */
   function blocDocsDevis(d, docs) {
@@ -737,6 +767,7 @@
         (inter.length ? '<p class="muted small" style="margin-bottom:0">Déjà demandé : ' + inter.map((f) => esc(f.pourcentage) + ' %' + (f.faite === 'oui' ? ' (facturé)' : '')).join(', ') + '</p>' : '') + '</div>'
         : '<div class="card"><p style="margin:0"><span class="pill green">Chantier terminé</span> ' + (d.dateFinChantier ? 'le ' + fr(d.dateFinChantier) : '') + '</p></div>') +
       '<div class="card"><h2>PV de réception</h2>' + blocPV(d, S.dossier.documents || []) + '</div>' +
+      '<div class="card"><h2>Documents</h2>' + blocDocuments(d, S.dossier.documents || []) + '</div>' +
       '<div class="card"><h2>Historique du chantier</h2>' + blocCommentaires(commentaires) + '</div>';
   }
 
@@ -939,6 +970,48 @@
           const fichiers = Array.from(form.querySelector('input[name=devisFichiers]').files || []);
           await agir('devisFait', { id, numDevis: v.numDevis, client: v.client, commentaire: v.commentaire }, 'Devis enregistré');
           await envoyerDocs(id, 'devis', fichiers);
+        }
+      });
+    },
+    deposer(id) {
+      const d = S.dossier && S.dossier.dossier.id === id ? S.dossier.dossier : parId(id);
+      fenetre({
+        titre: 'Déposer des documents ou photos', sousTitre: esc(nomChantier(d)),
+        corps: champ('Fichiers *', '<input type="file" name="fichiers" multiple>', 'Photos, PDF, Word, Excel… Vous pouvez en choisir plusieurs.') +
+          '<div data-noms></div>',
+        bouton: 'Déposer',
+        apres: (form) => {
+          const inp = form.querySelector('input[name=fichiers]');
+          inp.onchange = () => {
+            form.querySelector('[data-noms]').innerHTML = Array.from(inp.files).map((f, i) =>
+              champ('Nom du document ' + (Array.from(inp.files).length > 1 ? (i + 1) + ' ' : '') + '<span class="muted small" style="font-weight:400">(' + esc(f.name) + ')</span>',
+                '<input type="text" name="nom_' + i + '" value="' + esc(f.name.replace(/\.[a-z0-9]{2,5}$/i, '')) + '">')).join('');
+            const premier = form.querySelector('[data-noms] input');
+            if (premier) { premier.focus(); premier.select(); }
+          };
+        },
+        valider: async (v, form) => {
+          const fichiers = Array.from(form.querySelector('input[name=fichiers]').files || []);
+          if (!fichiers.length) throw new Error('Choisissez au moins un fichier.');
+          for (let i = 0; i < fichiers.length; i++) {
+            if (!v['nom_' + i]) throw new Error('Donnez un nom au document ' + (i + 1) + '.');
+          }
+          for (let i = 0; i < fichiers.length; i++) {
+            toast('Envoi du document ' + (i + 1) + ' sur ' + fichiers.length + '…');
+            await televerser(fichiers[i], 'divers', d.id, '', v['nom_' + i]);
+          }
+        }
+      });
+    },
+    renommerDoc(id) {
+      const doc = ((S.dossier && S.dossier.documents) || S.data.documents || []).find((x) => x.id === id);
+      fenetre({
+        titre: 'Renommer le document',
+        corps: champ('Nouveau nom', input('nom', (doc.nom || '').replace(/\.[a-z0-9]{2,5}$/i, ''))),
+        bouton: 'Renommer',
+        valider: (v) => {
+          if (!v.nom) throw new Error('Indiquez un nom.');
+          return agir('renommerDocument', { id, nom: v.nom }, 'Document renommé');
         }
       });
     },
@@ -1218,18 +1291,25 @@
     });
   }
   /** Envoie un fichier (PDF ou photo) au programme Google */
-  async function televerser(file, type, dossierId, commandeId) {
+  async function televerser(file, type, dossierId, commandeId, nomChoisi) {
     if (file.size > 20 * 1024 * 1024) throw new Error('Fichier trop lourd (20 Mo maximum).');
     let b64, mime = file.type, nom = file.name;
+    const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || [''])[0];
     if (file.type.indexOf('image/') === 0) {
       b64 = await reduirePhoto(file, 1600);
       mime = 'image/jpeg';
+      if (!b64) mime = file.type;
       nom = ({ arc: 'ARC ', reception: 'Réception ', pv: 'PV ', reserve: 'Réserve ', devis: 'Devis ' }[type] || 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
     }
     if (!b64) b64 = await lireBase64(file);
+    let nomFichier = nom;
+    if (nomChoisi) {
+      nom = nomChoisi;
+      nomFichier = nomChoisi + (mime === 'image/jpeg' && file.type !== 'image/jpeg' ? '.jpg' : ext);
+    }
     toast('Envoi en cours…');
-    await agir('envoyerFichier', { dossierId, commandeId: commandeId || '', type, base64: b64, mime, nom },
-      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée', pv: 'Document du PV enregistré', reserve: 'Photo de réserve enregistrée', devis: 'Document du devis enregistré' }[type] || 'Photo enregistrée');
+    await agir('envoyerFichier', { dossierId, commandeId: commandeId || '', type, base64: b64, mime, nom, nomFichier },
+      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée', pv: 'Document du PV enregistré', reserve: 'Photo de réserve enregistrée', devis: 'Document du devis enregistré', divers: 'Document enregistré' }[type] || 'Photo enregistrée');
   }
 
   async function envoyerFichier(inp) {
@@ -1308,6 +1388,8 @@
     termine: (el) => FORMS.termine(el.dataset.id),
     pv: (el) => FORMS.pv(el.dataset.id),
     docDevis: (el) => FORMS.docDevis(el.dataset.id),
+    deposer: (el) => FORMS.deposer(el.dataset.id),
+    renommerDoc: (el) => FORMS.renommerDoc(el.dataset.id),
     supprDoc: (el) => FORMS.confirmer('Retirer ce document ?', 'Il ne sera plus affiché dans le dossier. Le fichier part dans la corbeille Google Drive, où il reste récupérable pendant 30 jours.', 'Retirer',
       () => agir('supprimerDocument', { id: el.dataset.id }, 'Document retiré'), 'danger'),
     saveMails: () => essayer(async () => {
@@ -1409,6 +1491,25 @@
         await afficher();
       });
     }
+  });
+  document.addEventListener('input', (ev) => {
+    const t = ev.target;
+    if (!t.matches('[data-docsearch]')) return;
+    const q = sansAccent(t.value).trim();
+    const carte = t.closest('.card');
+    let n = 0;
+    carte.querySelectorAll('.doc').forEach((el) => {
+      const ok = !q || (el.dataset.nom || '').indexOf(q) >= 0;
+      el.hidden = !ok;
+      if (ok) n++;
+    });
+    carte.querySelectorAll('.docs').forEach((g) => {
+      const titre = g.previousElementSibling;
+      const visible = Array.from(g.children).some((x) => !x.hidden);
+      g.hidden = !visible;
+      if (titre && titre.classList.contains('muted') && titre.tagName === 'DIV') titre.hidden = !visible;
+    });
+    carte.querySelector('.doc-vide').hidden = n > 0;
   });
   window.addEventListener('hashchange', afficher);
   $('#menu-btn').onclick = () => {
