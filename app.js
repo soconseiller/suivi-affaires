@@ -610,6 +610,11 @@
     let courantVu = false;
     const etapes = [];
     PARCOURS.forEach((e, i) => {
+      if (e === 'commande') {
+        // Commande client : validée dès que le devis est accepté (le matériel se suit dans les 3 étapes suivantes)
+        etapes.push({ lib: 'Commande', cls: idx >= i ? 'done' : '' });
+        return;
+      }
       if (e !== 'materiel') {
         etapes.push({ lib: ETAPES()[e], cls: idx < 0 ? '' : i < idx ? 'done' : i === idx ? (e === 'facture' ? 'done' : 'current') : '' });
         return;
@@ -617,7 +622,7 @@
       sousEtapes.forEach((se) => {
         let cls = '';
         if (se.ok) cls = 'done';
-        else if (idx === iMat && !courantVu) { cls = 'current'; courantVu = true; }
+        else if ((idx === iMat || idx === iMat - 1) && !courantVu) { cls = 'current'; courantVu = true; }
         else if (idx > iMat) cls = 'manque';
         etapes.push({ lib: se.lib, cls, titre: cls === 'manque' ? 'Étape non validée' : '' });
       });
