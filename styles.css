@@ -299,3 +299,11 @@ input[type=time] { font: inherit; border: 1px solid #CFD4DE; border-radius: 8px;
 .manques li { margin: 6px 0; }
 .mini-list.interv li { padding: 10px 0; }
 @media (max-width: 860px) { .interv-haut { grid-template-columns: 1fr 1fr auto; } }
+.interv-ligne .interv-haut { grid-template-columns: 28px 1fr 140px 36px; align-items: center; }
+.interv-lib { font-size: 13px; font-weight: 600; color: var(--muted); }
+.interv-aide { margin: -2px 0 8px 36px; }
+@media (max-width: 860px) { .interv-ligne .interv-haut { grid-template-columns: 26px 1fr 112px 32px; } .interv-aide { margin-left: 0; } }
+.step.manque .dot { background: var(--amber-soft); border-color: #D9A441; color: var(--amber); font-weight: 700; }
+.step.manque { color: var(--amber); }
+.step.manque::before { background: var(--green); }
+.steps .step { min-width: 84px; }

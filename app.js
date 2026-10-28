@@ -77,18 +77,37 @@
   const LIB_CRENEAU = { journee: 'Journée', matin: 'Matin', apres_midi: 'Après-midi' };
   const interventionsDe = (id) => (S.data.interventions || []).filter((x) => x.dossierId === id)
     .sort((a, b) => (a.date + (a.creneau === 'apres_midi' ? 2 : 1) < b.date + (b.creneau === 'apres_midi' ? 2 : 1) ? -1 : 1));
-  /** « lun. 3 nov. (journée) · mer. 5 nov. (matin) » ; à défaut, les dates de début et de fin */
+  /** Jours d'une période : premier et dernier jour avec leur créneau, journées entières entre les deux */
+  function joursPeriode(x) {
+    const fin = x.dateFin && x.dateFin >= x.date ? x.dateFin : x.date;
+    const out = [];
+    for (let j = x.date, n = 0; j <= fin && n < 90; j = addDays(j, 1), n++) {
+      out.push({ date: j, creneau: j === x.date ? (x.creneau || 'journee') : j === fin ? (x.creneauFin || 'journee') : 'journee' });
+    }
+    return out;
+  }
+  const minus = (c) => LIB_CRENEAU[c].toLowerCase();
+  function libellePeriode(x) {
+    const j = joursPeriode(x);
+    if (j.length === 1) return fr(x.date, true) + ' (' + minus(j[0].creneau) + ')';
+    return 'du ' + fr(x.date, true) + ' (' + minus(j[0].creneau) + ') au ' + fr(j[j.length - 1].date, true) + ' (' + minus(j[j.length - 1].creneau) + ')';
+  }
+  /** Résumé des périodes ; à défaut, les dates de début et de fin */
   function datesChantier(d) {
     const its = interventionsDe(d.id);
-    if (its.length) return its.map((x) => fr(x.date, true) + ' (' + LIB_CRENEAU[x.creneau].toLowerCase() + ')').join(' · ');
+    if (its.length) return its.map(libellePeriode).join(' · ');
     return d.dateDebut ? fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '') : '';
   }
   function listeInterventions(its) {
-    return '<ul class="mini-list interv">' + its.map((x) => '<li style="display:block"><div><strong>' + fr(x.date, true) + '</strong> · ' +
-      '<span class="pill ' + (x.creneau === 'journee' ? '' : 'grey') + '">' + LIB_CRENEAU[x.creneau] + '</span>' +
-      (x.date < today() ? ' <span class="muted small">passée</span>' : '') + '</div>' +
-      (x.travaux ? '<div class="small" style="margin-top:4px;white-space:pre-line">' + esc(x.travaux) + '</div>' : '<div class="small muted">Travaux non précisés</div>') +
-      '</li>').join('') + '</ul>';
+    return '<ul class="mini-list interv">' + its.map((x) => {
+      const j = joursPeriode(x);
+      const fin = j[j.length - 1].date;
+      return '<li style="display:block"><div><strong>' + libellePeriode(x).replace(/^du /, 'Du ') + '</strong>' +
+        (j.length > 1 ? ' <span class="pill grey">' + j.length + ' jours</span>' : '') +
+        (fin < today() ? ' <span class="muted small">passée</span>' : '') + '</div>' +
+        (x.travaux ? '<div class="small" style="margin-top:4px;white-space:pre-line">' + esc(x.travaux) + '</div>' : '<div class="small muted">Travaux non précisés</div>') +
+        '</li>';
+    }).join('') + '</ul>';
   }
   /** Ce qui n'est pas encore validé avant de planifier */
   function etapesManquantes(d) {
@@ -359,7 +378,8 @@
     });
     ds.filter(ouvert).forEach((d) => {
       const its = interventionsDe(d.id);
-      if (its.length) its.filter((x) => x.date >= t && x.date <= fin).forEach((x) => semaine.push({ date: x.date, d, txt: 'Intervention (' + LIB_CRENEAU[x.creneau].toLowerCase() + ')' }));
+      if (its.length) its.forEach((x) => joursPeriode(x).filter((j) => j.date >= t && j.date <= fin)
+        .forEach((j) => semaine.push({ date: j.date, d, txt: 'Intervention (' + minus(j.creneau) + ')' })));
       else if (d.dateDebut && d.dateDebut >= t && d.dateDebut <= fin) semaine.push({ date: d.dateDebut, d, txt: 'Début de chantier' });
     });
     semaine.sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -579,10 +599,31 @@
   function vueDossier() {
     const { dossier: d, commandes, factures, commentaires, historique } = S.dossier;
     const idx = PARCOURS.indexOf(d.etape);
-    const steps = '<div class="steps" aria-label="Avancement du dossier">' + PARCOURS.map((e, i) => {
-      const cls = idx < 0 ? '' : i < idx ? 'done' : i === idx ? (e === 'facture' ? 'done' : 'current') : '';
-      return '<div class="step ' + cls + '"><div class="dot">' + (cls === 'done' ? '✓' : '') + '</div>' + esc(ETAPES()[e]) + '</div>';
-    }).join('') + '</div>';
+    // L'étape « matériel » est détaillée en 3 : commandé, ARC contrôlé, réception conforme
+    const cmds = commandes;
+    const sousEtapes = [
+      { lib: 'Matériel commandé', ok: cmds.length > 0 },
+      { lib: 'ARC contrôlé', ok: cmds.length > 0 && cmds.every((c) => c.arcControle === 'oui') },
+      { lib: 'Réception conforme', ok: cmds.length > 0 && cmds.every((c) => c.receptionStatut === 'conforme') }
+    ];
+    const iMat = PARCOURS.indexOf('materiel');
+    let courantVu = false;
+    const etapes = [];
+    PARCOURS.forEach((e, i) => {
+      if (e !== 'materiel') {
+        etapes.push({ lib: ETAPES()[e], cls: idx < 0 ? '' : i < idx ? 'done' : i === idx ? (e === 'facture' ? 'done' : 'current') : '' });
+        return;
+      }
+      sousEtapes.forEach((se) => {
+        let cls = '';
+        if (se.ok) cls = 'done';
+        else if (idx === iMat && !courantVu) { cls = 'current'; courantVu = true; }
+        else if (idx > iMat) cls = 'manque';
+        etapes.push({ lib: se.lib, cls, titre: cls === 'manque' ? 'Étape non validée' : '' });
+      });
+    });
+    const steps = '<div class="steps" aria-label="Avancement du dossier">' + etapes.map((x) =>
+      '<div class="step ' + x.cls + '"' + (x.titre ? ' title="' + x.titre + '"' : '') + '><div class="dot">' + (x.cls === 'done' ? '✓' : x.cls === 'manque' ? '!' : '') + '</div>' + esc(x.lib) + '</div>').join('') + '</div>';
 
     const kv = (pairs) => '<dl class="kv">' + pairs.filter((p) => p[1]).map((p) => '<dt>' + p[0] + '</dt><dd>' + p[1] + '</dd>').join('') + '</dl>';
 
@@ -1139,18 +1180,31 @@
       const d = parId(id);
       const techs = S.data.users.filter((u) => u.actif !== 'non');
       const choisis = (d.techniciens || '').split(',');
-      let its = interventionsDe(id).map((x) => ({ id: x.id, date: x.date, creneau: x.creneau, travaux: x.travaux }));
-      if (!its.length && d.dateDebut) {
-        // ancien planning (dates de début et de fin) : une journée par jour
-        for (let j = d.dateDebut, n = 0; j <= (d.dateFin || d.dateDebut) && n < 14; j = addDays(j, 1), n++) its.push({ date: j, creneau: 'journee', travaux: '' });
-      }
-      if (!its.length) its = [{ date: '', creneau: 'journee', travaux: '' }];
+      let its = interventionsDe(id).map((x) => ({ id: x.id, date: x.date, creneau: x.creneau, dateFin: x.dateFin || x.date, creneauFin: x.creneauFin || x.creneau, travaux: x.travaux }));
+      // ancien planning (dates de début et de fin) : une seule période
+      if (!its.length && d.dateDebut) its.push({ date: d.dateDebut, creneau: 'journee', dateFin: d.dateFin || d.dateDebut, creneauFin: 'journee', travaux: '' });
+      if (!its.length) its = [{ date: '', creneau: 'journee', dateFin: '', creneauFin: 'journee', travaux: '' }];
+      const choixCreneau = (name, val) => '<select name="' + name + '" aria-label="Créneau">' + Object.keys(LIB_CRENEAU).map((k) =>
+        '<option value="' + k + '"' + (val === k ? ' selected' : '') + '>' + LIB_CRENEAU[k] + '</option>').join('') + '</select>';
       const ligneIt = (x) => '<div class="interv-ligne" data-it="' + esc(x.id || '') + '">' +
-        '<div class="interv-haut">' + input('it_date', x.date, 'date', 'aria-label="Date"') +
-        '<select name="it_creneau" aria-label="Créneau">' + Object.keys(LIB_CRENEAU).map((k) =>
-          '<option value="' + k + '"' + (x.creneau === k ? ' selected' : '') + '>' + LIB_CRENEAU[k] + '</option>').join('') + '</select>' +
+        '<div class="interv-haut"><span class="interv-lib">Du</span>' + input('it_date', x.date, 'date', 'aria-label="Date de début"') + choixCreneau('it_creneau', x.creneau) +
         '<button type="button" class="btn ghost danger" data-retirer-it aria-label="Retirer cette période">✕</button></div>' +
-        '<textarea name="it_travaux" rows="2" placeholder="Travaux à faire ce jour-là…">' + esc(x.travaux || '') + '</textarea></div>';
+        '<div class="interv-haut"><span class="interv-lib">Au</span>' + input('it_fin', x.dateFin && x.dateFin !== x.date ? x.dateFin : '', 'date', 'aria-label="Date de fin"') +
+        '<span data-fin-creneau' + (x.dateFin && x.dateFin !== x.date ? '' : ' hidden') + '>' + choixCreneau('it_creneau_fin', x.creneauFin || 'journee') + '</span><span></span></div>' +
+        '<div class="small muted interv-aide" data-aide></div>' +
+        '<textarea name="it_travaux" rows="2" placeholder="Travaux à faire sur cette période…">' + esc(x.travaux || '') + '</textarea></div>';
+      const majLigne = (el) => {
+        const deb = el.querySelector('[name=it_date]').value;
+        const fin = el.querySelector('[name=it_fin]').value;
+        const plusieurs = deb && fin && fin > deb;
+        el.querySelector('[data-fin-creneau]').hidden = !plusieurs;
+        const aide = el.querySelector('[data-aide]');
+        if (fin && deb && fin < deb) aide.textContent = 'La date de fin est avant la date de début.';
+        else if (plusieurs) {
+          const j = joursPeriode({ date: deb, dateFin: fin, creneau: 'journee', creneauFin: 'journee' }).length;
+          aide.textContent = j + ' jours, un rendez-vous par jour.' + (j > 2 ? ' Les jours entre le premier et le dernier sont des journées entières.' : '');
+        } else aide.textContent = 'Laissez « Au » vide pour une seule journée.';
+      };
       const r = S.data.reglages;
       fenetre({
         titre: d.dateDebut ? 'Modifier le planning' : 'Planifier le chantier', sousTitre: esc(nomClient(d)),
@@ -1158,16 +1212,19 @@
           '<div class="field"><span>Périodes d\'intervention *</span><div data-its>' + its.map(ligneIt).join('') + '</div>' +
           '<button type="button" class="btn" data-ajout-it>+ Ajouter une période</button>' +
           '<small>Journée : ' + esc(r.matinDebut || '08:00') + '–' + esc(r.apremFin || '17:30') + ' · Matin : ' + esc(r.matinDebut || '08:00') + '–' + esc(r.matinFin || '12:00') +
-          ' · Après-midi : ' + esc(r.apremDebut || '13:30') + '–' + esc(r.apremFin || '17:30') + '. Chaque période est écrite dans l\'agenda, avec les travaux dans les notes.</small></div>' +
+          ' · Après-midi : ' + esc(r.apremDebut || '13:30') + '–' + esc(r.apremFin || '17:30') + '. Un rendez-vous par jour dans l\'agenda, avec les travaux dans les notes.</small></div>' +
           '<div class="field"><span>Technicien(s)</span><div class="stack">' + techs.map((u) =>
             '<label class="check"><input type="checkbox" name="tech_' + esc(u.email) + '"' + (choisis.indexOf(u.email) >= 0 ? ' checked' : '') + '> ' + esc(u.nom || u.email) +
             (u.role === 'admin' ? ' <span class="muted small">(administration)</span>' : '') + '</label>').join('') + '</div></div>',
         apres: (form) => {
           const zone = form.querySelector('[data-its]');
+          zone.querySelectorAll('.interv-ligne').forEach(majLigne);
+          zone.oninput = (ev) => { const l = ev.target.closest('.interv-ligne'); if (l) majLigne(l); };
           form.querySelector('[data-ajout-it]').onclick = () => {
-            const dern = zone.querySelectorAll('input[name=it_date]');
-            const der = dern.length ? dern[dern.length - 1].value : '';
-            zone.insertAdjacentHTML('beforeend', ligneIt({ date: der ? addDays(der, 1) : '', creneau: 'journee', travaux: '' }));
+            const lignes = zone.querySelectorAll('.interv-ligne');
+            const der = lignes.length ? (lignes[lignes.length - 1].querySelector('[name=it_fin]').value || lignes[lignes.length - 1].querySelector('[name=it_date]').value) : '';
+            zone.insertAdjacentHTML('beforeend', ligneIt({ date: der ? addDays(der, 1) : '', creneau: 'journee', dateFin: '', creneauFin: 'journee', travaux: '' }));
+            majLigne(zone.lastElementChild);
           };
           zone.onclick = (ev) => {
             const b = ev.target.closest('[data-retirer-it]');
@@ -1179,10 +1236,14 @@
             id: el.dataset.it || '',
             date: el.querySelector('[name=it_date]').value,
             creneau: el.querySelector('[name=it_creneau]').value,
+            dateFin: el.querySelector('[name=it_fin]').value || el.querySelector('[name=it_date]').value,
+            creneauFin: el.querySelector('[name=it_creneau_fin]').value,
             travaux: el.querySelector('[name=it_travaux]').value.trim()
           }));
           if (!lignes.length) throw new Error('Ajoutez au moins une période d\'intervention.');
-          if (lignes.some((x) => !x.date)) throw new Error('Indiquez la date de chaque période (ou retirez la ligne vide).');
+          if (lignes.some((x) => !x.date)) throw new Error('Indiquez la date de début de chaque période (ou retirez la ligne vide).');
+          if (lignes.some((x) => x.dateFin < x.date)) throw new Error('Une période se termine avant de commencer.');
+          lignes.forEach((x) => { if (x.dateFin === x.date) x.creneauFin = x.creneau; });
           const t = Object.keys(v).filter((k) => k.indexOf('tech_') === 0).map((k) => k.slice(5));
           return agir('planifier', { id, chantier: v.chantier, interventions: lignes, techniciens: t.join(',') }, 'Chantier planifié et inscrit dans l\'agenda');
         }
