@@ -585,7 +585,8 @@
         ['Prochaine relance', d.etape === 'devis_envoye' ? fr(d.prochaineRelance, true) + ' (' + relatif(d.prochaineRelance) + ')' : ''],
         ['Notes de relance', esc(d.notesRelance)],
         ['Refus', d.motifRefus ? esc(d.motifRefus) + (d.commentaireRefus ? ' – ' + esc(d.commentaireRefus) : '') : '']
-      ]) : '<p class="muted">Pas encore fait.</p>') + '</div>' +
+      ]) : '<p class="muted">Pas encore fait.</p>') +
+      blocDocsDevis(d, (S.dossier.documents || []).filter((x) => x.type === 'devis')) + '</div>' +
       '<div class="card"><h2>Commande client</h2>' + (d.dateValidation ? kv([
         ['Validé le', fr(d.dateValidation)],
         ['N° de commande', d.numCommande ? esc(d.numCommande) : '<span class="pill amber">à saisir</span>'],
@@ -613,7 +614,7 @@
         ['Terminé le', fr(d.dateFinChantier)]
       ]) + '<div class="progress-line" style="margin:12px 0 4px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div>'
         : '<p class="muted">Pas encore planifié.</p>') + '</div>' +
-      (['en_cours', 'termine', 'facture'].indexOf(d.etape) >= 0 || d.pvStatut || (S.dossier.documents || []).length
+      (['en_cours', 'termine', 'facture'].indexOf(d.etape) >= 0 || d.pvStatut || (S.dossier.documents || []).some((x) => x.type !== 'devis')
         ? '<div class="card"><h2>PV de réception</h2>' + blocPV(d, S.dossier.documents || []) + '</div>' : '') +
       '<div class="card"><h2>Factures</h2>' + (factures.length ? '<ul class="mini-list">' + factures.map((f) =>
         '<li><span>' + (f.type === 'finale' ? 'Facture finale' : 'Intermédiaire ' + esc(f.pourcentage) + ' %') + '<br><span class="muted small">demandée le ' + fr(f.dateDemande) + (f.commentaire ? ' · ' + esc(f.commentaire) : '') + '</span></span>' +
@@ -642,20 +643,27 @@
   const lienDrive = (id) => 'https://drive.google.com/file/d/' + esc(id) + '/view';
   const estImage = (doc) => /^image\//.test(doc.mime || '') || /\.(jpe?g|png|heic|webp)$/i.test(doc.nom || '');
 
+  const vignette = (x) => '<div class="doc">' +
+      '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">' +
+      (estImage(x) ? '<img src="https://drive.google.com/thumbnail?id=' + esc(x.fichier) + '&sz=w320" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=doc-ico>Photo</span>\'">' : '<span class="doc-ico">' + esc(((x.nom || '').match(/\.([a-z0-9]{2,4})$/i) || [0, 'DOC'])[1].toUpperCase()) + '</span>') +
+      '<span class="doc-nom">' + esc(x.nom || 'Document') + '</span></a>' +
+      '<button class="link danger" data-act="supprDoc" data-id="' + x.id + '">retirer</button></div>';
+
+  /** Documents joints au devis (devis signé, annexes, plans…) */
+  function blocDocsDevis(d, docs) {
+    return (docs.length ? '<div class="small muted" style="margin:14px 0 6px">Documents du devis</div><div class="docs">' + docs.map(vignette).join('') + '</div>' : '') +
+      '<div class="actions" style="margin-top:12px"><button class="btn" data-act="docDevis" data-id="' + d.id + '">' + (docs.length ? '+ Ajouter un document' : 'Joindre le devis') + '</button></div>';
+  }
+
   function blocPV(d, docs) {
     const pv = docs.filter((x) => x.type === 'pv');
     const res = docs.filter((x) => x.type === 'reserve');
-    const vignette = (x) => '<div class="doc">' +
-      '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">' +
-      (estImage(x) ? '<img src="https://drive.google.com/thumbnail?id=' + esc(x.fichier) + '&sz=w320" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=doc-ico>Photo</span>\'">' : '<span class="doc-ico">PDF</span>') +
-      '<span class="doc-nom">' + esc(x.nom || 'Document') + '</span></a>' +
-      '<button class="link danger" data-act="supprDoc" data-id="' + x.id + '">retirer</button></div>';
     return '<div class="actions" style="align-items:center;margin-bottom:10px">' + pillPV(d) +
       (d.pvDate ? '<span class="muted small">le ' + fr(d.pvDate) + '</span>' : '') + '</div>' +
       (d.pvStatut === 'avec_reserves' && d.pvReserves ? '<div class="help" style="white-space:pre-line"><strong>Réserves :</strong> ' + esc(d.pvReserves) + '</div>' : '') +
       (pv.length ? '<div class="docs">' + pv.map(vignette).join('') + '</div>' : '') +
       (res.length ? '<div class="small muted" style="margin:10px 0 6px">Photos des réserves</div><div class="docs">' + res.map(vignette).join('') + '</div>' : '') +
-      '<div class="actions" style="margin-top:10px"><button class="btn" data-act="pv" data-id="' + d.id + '">' + (d.pvStatut || docs.length ? 'Compléter le PV' : 'Joindre le PV') + '</button></div>';
+      '<div class="actions" style="margin-top:10px"><button class="btn" data-act="pv" data-id="' + d.id + '">' + (d.pvStatut || pv.length || res.length ? 'Compléter le PV' : 'Joindre le PV') + '</button></div>';
   }
 
   /** Réception d'une commande, dans la fiche et sur l'écran chantier */
@@ -901,6 +909,12 @@
     const res = statut === 'avec_reserves' ? Array.from(form.querySelector('input[name=reserveFichiers]').files || []) : [];
     return { statut, reserves: statut === 'avec_reserves' ? (v.reserves || '') : '', pv: statut ? pv : [], res };
   }
+  async function envoyerDocs(dossierId, type, fichiers) {
+    for (let i = 0; i < fichiers.length; i++) {
+      toast('Envoi du document ' + (i + 1) + ' sur ' + fichiers.length + '…');
+      await televerser(fichiers[i], type, dossierId);
+    }
+  }
   async function envoyerFichiersPV(dossierId, pv) {
     const tous = pv.pv.map((f) => ['pv', f]).concat(pv.res.map((f) => ['reserve', f]));
     for (let i = 0; i < tous.length; i++) {
@@ -917,11 +931,27 @@
         corps: champ('Numéro de devis *', input('numDevis', '', 'text', 'required')) +
           champ('Nom du client *', input('client', d.client, 'text', 'required')) +
           champ('Commentaire', '<textarea name="commentaire" rows="3"></textarea>') +
+          champ('Document(s) du devis', '<input type="file" name="devisFichiers" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx" multiple>', 'Facultatif. Vous pouvez en choisir plusieurs.') +
           '<p class="muted small">Une coche verte ✅ sera ajoutée au rendez-vous dans l\'agenda.</p>',
-        valider: (v) => {
+        valider: async (v, form) => {
           if (!v.numDevis) throw new Error('Le numéro de devis est obligatoire.');
           if (!v.client) throw new Error('Le nom du client est obligatoire.');
-          return agir('devisFait', { id, numDevis: v.numDevis, client: v.client, commentaire: v.commentaire }, 'Devis enregistré');
+          const fichiers = Array.from(form.querySelector('input[name=devisFichiers]').files || []);
+          await agir('devisFait', { id, numDevis: v.numDevis, client: v.client, commentaire: v.commentaire }, 'Devis enregistré');
+          await envoyerDocs(id, 'devis', fichiers);
+        }
+      });
+    },
+    docDevis(id) {
+      const d = S.dossier && S.dossier.dossier.id === id ? S.dossier.dossier : parId(id);
+      fenetre({
+        titre: 'Documents du devis', sousTitre: esc(nomClient(d)) + (d.numDevis ? ' · devis ' + esc(d.numDevis) : ''),
+        corps: champ('Document(s) à joindre *', '<input type="file" name="devisFichiers" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx" multiple>', 'Vous pouvez en choisir plusieurs.'),
+        bouton: 'Joindre',
+        valider: async (v, form) => {
+          const fichiers = Array.from(form.querySelector('input[name=devisFichiers]').files || []);
+          if (!fichiers.length) throw new Error('Choisissez au moins un document.');
+          await envoyerDocs(d.id, 'devis', fichiers);
         }
       });
     },
@@ -1194,12 +1224,12 @@
     if (file.type.indexOf('image/') === 0) {
       b64 = await reduirePhoto(file, 1600);
       mime = 'image/jpeg';
-      nom = ({ arc: 'ARC ', reception: 'Réception ', pv: 'PV ', reserve: 'Réserve ' }[type] || 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
+      nom = ({ arc: 'ARC ', reception: 'Réception ', pv: 'PV ', reserve: 'Réserve ', devis: 'Devis ' }[type] || 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
     }
     if (!b64) b64 = await lireBase64(file);
     toast('Envoi en cours…');
     await agir('envoyerFichier', { dossierId, commandeId: commandeId || '', type, base64: b64, mime, nom },
-      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée', pv: 'Document du PV enregistré', reserve: 'Photo de réserve enregistrée' }[type] || 'Photo enregistrée');
+      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée', pv: 'Document du PV enregistré', reserve: 'Photo de réserve enregistrée', devis: 'Document du devis enregistré' }[type] || 'Photo enregistrée');
   }
 
   async function envoyerFichier(inp) {
@@ -1277,6 +1307,7 @@
       () => agir('supprimerCommentaire', { id: el.dataset.id }, 'Commentaire supprimé'), 'danger'),
     termine: (el) => FORMS.termine(el.dataset.id),
     pv: (el) => FORMS.pv(el.dataset.id),
+    docDevis: (el) => FORMS.docDevis(el.dataset.id),
     supprDoc: (el) => FORMS.confirmer('Retirer ce document ?', 'Il ne sera plus affiché dans le dossier. Le fichier part dans la corbeille Google Drive, où il reste récupérable pendant 30 jours.', 'Retirer',
       () => agir('supprimerDocument', { id: el.dataset.id }, 'Document retiré'), 'danger'),
     saveMails: () => essayer(async () => {
