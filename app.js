@@ -73,17 +73,76 @@
   const btnRetour = (d) => etapePrec(d)
     ? '<button class="btn ghost" data-act="retour" data-id="' + d.id + '" title="Revenir à « ' + esc(ETAPES()[etapePrec(d)]) + ' »">↩ Étape précédente</button>' : '';
 
+  /* Interventions planifiées */
+  const LIB_CRENEAU = { journee: 'Journée', matin: 'Matin', apres_midi: 'Après-midi' };
+  const interventionsDe = (id) => (S.data.interventions || []).filter((x) => x.dossierId === id)
+    .sort((a, b) => (a.date + (a.creneau === 'apres_midi' ? 2 : 1) < b.date + (b.creneau === 'apres_midi' ? 2 : 1) ? -1 : 1));
+  /** Jours d'une période : premier et dernier jour avec leur créneau, journées entières entre les deux */
+  function joursPeriode(x) {
+    const fin = x.dateFin && x.dateFin >= x.date ? x.dateFin : x.date;
+    const out = [];
+    for (let j = x.date, n = 0; j <= fin && n < 90; j = addDays(j, 1), n++) {
+      out.push({ date: j, creneau: j === x.date ? (x.creneau || 'journee') : j === fin ? (x.creneauFin || 'journee') : 'journee' });
+    }
+    return out;
+  }
+  const minus = (c) => LIB_CRENEAU[c].toLowerCase();
+  function libellePeriode(x) {
+    const j = joursPeriode(x);
+    if (j.length === 1) return fr(x.date, true) + ' (' + minus(j[0].creneau) + ')';
+    return 'du ' + fr(x.date, true) + ' (' + minus(j[0].creneau) + ') au ' + fr(j[j.length - 1].date, true) + ' (' + minus(j[j.length - 1].creneau) + ')';
+  }
+  /** Résumé des périodes ; à défaut, les dates de début et de fin */
+  function datesChantier(d) {
+    const its = interventionsDe(d.id);
+    if (its.length) return its.map(libellePeriode).join(' · ');
+    return d.dateDebut ? fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '') : '';
+  }
+  function listeInterventions(its) {
+    return '<ul class="mini-list interv">' + its.map((x) => {
+      const j = joursPeriode(x);
+      const fin = j[j.length - 1].date;
+      return '<li style="display:block"><div><strong>' + libellePeriode(x).replace(/^du /, 'Du ') + '</strong>' +
+        (j.length > 1 ? ' <span class="pill grey">' + j.length + ' jours</span>' : '') +
+        (fin < today() ? ' <span class="muted small">passée</span>' : '') + '</div>' +
+        (x.travaux ? '<div class="small" style="margin-top:4px;white-space:pre-line">' + esc(x.travaux) + '</div>' : '<div class="small muted">Travaux non précisés</div>') +
+        '</li>';
+    }).join('') + '</ul>';
+  }
+  /** Ce qui n'est pas encore validé avant de planifier */
+  function etapesManquantes(d) {
+    const manque = [];
+    if (['devis_a_faire', 'devis_envoye', 'refuse', 'ignore'].indexOf(d.etape) >= 0) manque.push('Le devis n\'est pas validé par le client.');
+    const cmds = S.data.commandes.filter((c) => c.dossierId === d.id);
+    if (!cmds.length) manque.push('Le matériel n\'est pas commandé.');
+    cmds.filter((c) => c.arcControle !== 'oui').forEach((c) => manque.push('ARC non contrôlé : ' + c.fournisseur + '.'));
+    cmds.filter((c) => c.receptionStatut !== 'conforme').forEach((c) => manque.push('Réception non validée conforme : ' + c.fournisseur + '.'));
+    return manque;
+  }
+
   function pillEtape(d) {
     const cls = { devis_a_faire: 'amber', termine: 'amber', facture: 'green', refuse: 'red', ignore: 'grey' }[d.etape] || '';
     return '<span class="pill ' + cls + '">' + esc(ETAPES()[d.etape] || d.etape) + '</span>';
   }
 
   /* Retards (mêmes règles que les mails) */
+  /* Réception du matériel (une par commande fournisseur) */
+  const LIB_RECEP = { '': 'À réceptionner', conforme: 'Reçu conforme', non_conforme: 'Non conforme', partielle: 'Reçu en partie' };
+  const recepOuverte = (c) => c.receptionStatut !== 'conforme';
+  function pillRecep(c) {
+    const st = c.receptionStatut || '';
+    const cls = { conforme: 'green', non_conforme: 'red', partielle: 'amber' }[st] || (c.dateLivraison && c.dateLivraison <= today() ? 'amber' : 'grey');
+    return '<span class="pill ' + cls + '">' + LIB_RECEP[st] + '</span>';
+  }
+  const btnRecep = (c, cls) => '<button class="btn ' + (cls || 'primary') + '" data-act="reception" data-id="' + c.id + '">' +
+    (c.receptionStatut === 'non_conforme' || c.receptionStatut === 'partielle' ? 'Nouvelle réception' : 'Valider la réception') + '</button>';
+
   const enRetard = {
     devis: (d) => d.etape === 'devis_a_faire' && d.dateRdv && addDays(d.dateRdv, delai('devis_a_faire')) <= today(),
     relance: (d) => d.etape === 'devis_envoye' && d.prochaineRelance && d.prochaineRelance <= today(),
     materiel: (d) => d.etape === 'commande' && d.dateValidation && addDays(d.dateValidation, delai('commande_materiel')) <= today(),
-    arc: (c) => c.arcControle !== 'oui' && c.dateCommande && addDays(c.dateCommande, delai('arc')) <= today()
+    arc: (c) => c.arcControle !== 'oui' && c.dateCommande && addDays(c.dateCommande, delai('arc')) <= today(),
+    reception: (c) => recepOuverte(c) && c.dateLivraison && addDays(c.dateLivraison, delai('reception')) <= today()
   };
 
   /* ================================================================
@@ -111,11 +170,12 @@
         }
         const e = new Error(out.error || 'Erreur inconnue');
         e.code = out.code;
+        e.serveur = true;
         throw e;
       }
       return out.data;
     } catch (e) {
-      if (!e.code) e.message = "Le programme Google ne répond pas. Vérifiez votre connexion internet. (" + e.message + ')';
+      if (!e.code && !e.serveur) e.message = "Le programme Google ne répond pas. Vérifiez votre connexion internet. (" + e.message + ')';
       throw e;
     } finally {
       chargement(false);
@@ -174,6 +234,7 @@
     try {
       S.data = await api('boot');
       $('#app').hidden = false;
+      enregistrerSW().then(rafraichirJeton).catch(() => {});
       if (!location.hash || location.hash === '#') {
         location.hash = S.data.user.role === 'technicien' ? '#/terrain' : '#/';
       } else {
@@ -200,6 +261,8 @@
       materielRetard: ds.filter(enRetard.materiel).length,
       arc: arcs.length,
       arcRetard: arcs.filter(enRetard.arc).length,
+      receptions: S.data.commandes.filter((c2) => ouvert(parId(c2.dossierId)) && recepOuverte(c2) && c2.dateLivraison && c2.dateLivraison <= today()).length,
+      receptionsRetard: S.data.commandes.filter((c2) => ouvert(parId(c2.dossierId)) && (enRetard.reception(c2) || c2.receptionStatut === 'non_conforme')).length,
       aPlanifier: dOuverts.filter((d) => ['commande', 'materiel'].indexOf(d.etape) >= 0 && !d.dateDebut).length,
       enCours: ds.filter((d) => d.etape === 'en_cours').length,
       planifies: dOuverts.filter((d) => ['planifie', 'en_cours'].indexOf(d.etape) >= 0 || (d.dateDebut && ['commande', 'materiel'].indexOf(d.etape) >= 0)).length,
@@ -218,12 +281,13 @@
       lien('#/', 'Tableau de bord') +
       lien('#/devis', 'Devis à faire', c.devis, c.devisRetard) +
       lien('#/relances', 'Relances clients', c.relancesDues || '', c.relancesDues) +
-      lien('#/commandes', 'Commandes', c.materiel + c.arc, c.materielRetard + c.arcRetard) +
+      lien('#/commandes', 'Commandes', c.materiel + c.arc + c.receptions, c.materielRetard + c.arcRetard + c.receptionsRetard) +
       lien('#/planning', 'Planning', c.aPlanifier, false) +
       lien('#/facturer', 'À facturer', c.factures, c.factures) +
       lien('#/archives', 'Archives') +
       '<div class="nav-sep"></div>' +
-      lien('#/terrain', 'Écran chantier') +
+      lien('#/terrain', 'Infos chantiers') +
+      lien('#/telephone', 'Mon téléphone') +
       (estAdmin() ? lien('#/reglages', 'Réglages') : '') +
       '<div class="nav-user">' + esc(u.nom || u.email) + '<br><button type="button" data-act="logout">Se déconnecter</button>' +
       '<div style="margin-top:10px;font-size:11px;opacity:.6">par So Conseiller</div></div>';
@@ -254,6 +318,7 @@
         case 'facturer': html = vueFacturer(); break;
         case 'archives': html = vueArchives(); break;
         case 'reglages': html = estAdmin() ? vueReglages() : '<div class="empty">Réservé aux administrateurs.</div>'; break;
+        case 'telephone': html = vueTelephone(); break;
         case 'terrain':
           if (parts[1]) { await chargerDossier(parts[1]); html = vueTerrainChantier(); } else html = vueTerrain();
           break;
@@ -283,6 +348,139 @@
   }
 
   /* ================================================================
+   * MON TÉLÉPHONE : installation de l'appli et notifications (Firebase)
+   * ================================================================ */
+  const FB = window.SUIVI_FIREBASE || {};
+  const fbPret = () => FB.config && FB.config.apiKey && FB.config.apiKey !== 'A_REMPLIR' && FB.vapidKey && FB.vapidKey !== 'A_REMPLIR';
+  const estIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const estInstallee = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+  let invitationInstall = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); invitationInstall = e; });
+
+  let swEnreg = null;
+  async function enregistrerSW() {
+    if (!('serviceWorker' in navigator)) return null;
+    if (swEnreg) return swEnreg;
+    const url = '/firebase-messaging-sw.js' + (fbPret() ? '?cfg=' + encodeURIComponent(JSON.stringify(FB.config)) : '');
+    swEnreg = await navigator.serviceWorker.register(url, { scope: '/' });
+    return swEnreg;
+  }
+  function chargerScript(src) {
+    return new Promise((ok, ko) => {
+      if (document.querySelector('script[src="' + src + '"]')) { ok(); return; }
+      const sc = document.createElement('script');
+      sc.src = src; sc.onload = ok; sc.onerror = () => ko(new Error('Chargement impossible : ' + src));
+      document.head.appendChild(sc);
+    });
+  }
+  let messagerie = null;
+  async function firebaseMessagerie() {
+    if (messagerie) return messagerie;
+    await chargerScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
+    await chargerScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
+    if (!(await firebase.messaging.isSupported())) throw new Error('Ce navigateur ne peut pas recevoir de notifications.' + (estIOS() ? ' Sur iPhone, installez d\'abord l\'appli sur l\'écran d\'accueil (iOS 16.4 ou plus récent).' : ''));
+    if (!firebase.apps.length) firebase.initializeApp(FB.config);
+    messagerie = firebase.messaging();
+    // Appli ouverte : la notification s'affiche quand même, en bas de l'écran et dans le téléphone
+    messagerie.onMessage((p) => {
+      const d = p.data || {};
+      const titre = (p.notification && p.notification.title) || d.titre || 'Suivi affaires';
+      const texte = (p.notification && p.notification.body) || d.texte || '';
+      toast(titre + (texte ? ' — ' + texte : ''));
+      if (swEnreg && Notification.permission === 'granted') {
+        swEnreg.showNotification(titre, { body: texte, icon: '/icon-192.png', data: { lien: d.lien || '/' } });
+      }
+    });
+    return messagerie;
+  }
+  const nomAppareil = () => {
+    const ua = navigator.userAgent;
+    const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'PC Windows' : 'Appareil';
+    return os + (estInstallee() ? ' (appli)' : ' (navigateur)');
+  };
+  const monJeton = () => lire('sa_push_token');
+
+  async function activerNotifications() {
+    if (!fbPret()) throw new Error('Les notifications ne sont pas encore configurées (fichier firebase-config.js).');
+    if (estIOS() && !estInstallee()) throw new Error('Sur iPhone, installez d\'abord l\'appli sur l\'écran d\'accueil, puis ouvrez-la depuis son icône.');
+    if (!('Notification' in window)) throw new Error('Ce navigateur ne peut pas recevoir de notifications.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Les notifications ont été refusées. Autorisez-les dans les réglages du téléphone, rubrique Notifications, puis réessayez.');
+    const reg = await enregistrerSW();
+    const m = await firebaseMessagerie();
+    const token = await m.getToken({ vapidKey: FB.vapidKey, serviceWorkerRegistration: reg });
+    if (!token) throw new Error('Firebase n\'a pas fourni d\'identifiant pour cet appareil.');
+    await agir('enregistrerAppareil', { token, appareil: nomAppareil() }, 'Notifications activées sur cet appareil');
+    stocker('sa_push_token', token);
+  }
+  async function desactiverNotifications() {
+    const t = monJeton();
+    if (t) {
+      try { const m = await firebaseMessagerie(); await m.deleteToken(); } catch (e) { /* déjà retiré */ }
+      await agir('retirerAppareil', { token: t }, 'Notifications désactivées sur cet appareil');
+    }
+    stocker('sa_push_token', null);
+  }
+  /** Au démarrage : si les notifications sont actives ici, on garde l'identifiant à jour */
+  async function rafraichirJeton() {
+    try {
+      if (!fbPret() || !monJeton() || !('Notification' in window) || Notification.permission !== 'granted') return;
+      const reg = await enregistrerSW();
+      const m = await firebaseMessagerie();
+      const token = await m.getToken({ vapidKey: FB.vapidKey, serviceWorkerRegistration: reg });
+      if (token && (token !== monJeton() || !(S.data.mesAppareils || []).some((a) => a.token === token))) {
+        await api('enregistrerAppareil', { token, appareil: nomAppareil() });
+        stocker('sa_push_token', token);
+      }
+    } catch (e) { /* silencieux : la page « Mon téléphone » affichera l'état */ }
+  }
+
+  function vueTelephone() {
+    const u = S.data.user;
+    const canal = u.canal || 'mail';
+    const actifIci = !!monJeton() && ('Notification' in window) && Notification.permission === 'granted';
+    const refuse = ('Notification' in window) && Notification.permission === 'denied';
+    let install;
+    if (estInstallee()) install = '<p><span class="pill green">Installée</span> L\'appli est installée sur cet appareil.</p>';
+    else if (estIOS()) {
+      install = '<ol class="etapes-tel"><li>Ouvrez cette page dans <strong>Safari</strong>.</li>' +
+        '<li>Touchez le bouton <strong>Partager</strong> (le carré avec une flèche vers le haut).</li>' +
+        '<li>Choisissez <strong>« Sur l\'écran d\'accueil »</strong>, puis <strong>Ajouter</strong>.</li>' +
+        '<li>Ouvrez l\'appli <strong>depuis sa nouvelle icône</strong>, puis revenez sur « Mon téléphone ».</li></ol>' +
+        '<p class="muted small">Il faut iOS 16.4 ou plus récent pour recevoir les notifications.</p>';
+    } else {
+      install = (invitationInstall ? '<button class="btn primary" data-act="installer">Installer l\'appli</button>' :
+        '<ol class="etapes-tel"><li>Dans <strong>Chrome</strong>, touchez le menu <strong>⋮</strong> en haut à droite.</li>' +
+        '<li>Choisissez <strong>« Installer l\'application »</strong> (ou « Ajouter à l\'écran d\'accueil »).</li>' +
+        '<li>Ouvrez l\'appli depuis sa nouvelle icône.</li></ol>');
+    }
+    let notif;
+    if (!fbPret()) notif = '<p class="muted">Les notifications ne sont pas encore configurées par l\'administrateur.</p>';
+    else if (!S.data.pushPret) notif = '<p class="muted">Presque prêt : la clé Firebase n\'est pas encore enregistrée dans le programme Google (voir le guide).</p>';
+    else if (actifIci) {
+      notif = '<p><span class="pill green">Activées</span> Cet appareil reçoit les notifications.</p>' +
+        '<div class="actions"><button class="btn primary" data-act="notifTest">M\'envoyer une notification d\'essai</button>' +
+        '<button class="btn" data-act="notifOff">Désactiver sur cet appareil</button></div>';
+    } else if (refuse) {
+      notif = '<p><span class="pill red">Bloquées</span> Les notifications sont bloquées pour cette appli. Autorisez-les dans les réglages du téléphone (Notifications → Suivi affaires), puis revenez ici.</p>';
+    } else {
+      notif = '<p class="muted">Cet appareil ne reçoit pas encore les notifications.</p>' +
+        '<button class="btn primary big" data-act="notifOn"' + (estIOS() && !estInstallee() ? ' disabled' : '') + '>Activer les notifications sur cet appareil</button>' +
+        (estIOS() && !estInstallee() ? '<p class="muted small">Installez d\'abord l\'appli (étape 1).</p>' : '');
+    }
+    const appareils = S.data.mesAppareils || [];
+    return '<div class="page-head"><div><h1>Mon téléphone</h1><p>Installez l\'appli et recevez vos rappels en notification.</p></div></div>' +
+      '<div class="card"><h2>1. Installer l\'appli sur ce téléphone</h2>' + install + '</div>' +
+      '<div class="card"><h2>2. Notifications sur cet appareil</h2>' + notif + '</div>' +
+      '<div class="card"><h2>3. Comment je reçois mes rappels</h2>' +
+      '<div class="choices" role="radiogroup" aria-label="Canal">' + [['mail', 'Mail'], ['tel', 'Téléphone'], ['both', 'Les deux']].map((c) =>
+        '<label><input type="radio" name="canal" value="' + c[0] + '"' + (canal === c[0] ? ' checked' : '') + ' data-canal><span>' + c[1] + '</span></label>').join('') + '</div>' +
+      '<p class="muted small" style="margin:0">Si aucun appareil n\'a les notifications activées, vous recevez toujours le mail. Le récapitulatif de la semaine arrive toujours par mail.</p></div>' +
+      (appareils.length ? '<div class="card"><h2>Mes appareils</h2><ul class="mini-list">' + appareils.map((a) =>
+        '<li><span>' + esc(a.appareil || 'Appareil') + (a.token === monJeton() ? ' <span class="pill">cet appareil</span>' : '') + '</span><span class="muted small">depuis le ' + fr(a.date) + '</span></li>').join('') + '</ul></div>' : '');
+  }
+
+  /* ================================================================
    * TABLEAU DE BORD
    * ================================================================ */
   function vueAccueil() {
@@ -301,6 +499,8 @@
     ds.filter(enRetard.materiel).forEach((d) => retards.push({ d, txt: 'Matériel à commander', date: d.dateValidation, quand: 'validé ' + fr(d.dateValidation) }));
     S.data.commandes.filter((c2) => enRetard.arc(c2) && ouvert(parId(c2.dossierId))).forEach((c2) =>
       retards.push({ d: parId(c2.dossierId), txt: 'ARC à contrôler (' + c2.fournisseur + ')', date: c2.dateCommande, quand: 'commandé ' + fr(c2.dateCommande) }));
+    S.data.commandes.filter((c2) => ouvert(parId(c2.dossierId)) && (enRetard.reception(c2) || c2.receptionStatut === 'non_conforme')).forEach((c2) =>
+      retards.push({ d: parId(c2.dossierId), txt: (c2.receptionStatut === 'non_conforme' ? 'Réception non conforme (' : 'Réception à valider (') + c2.fournisseur + ')', date: c2.dateLivraison, quand: 'attendu ' + fr(c2.dateLivraison) }));
     S.data.factures.filter((f) => f.faite !== 'oui' && parId(f.dossierId)).forEach((f) =>
       retards.push({ d: parId(f.dossierId), txt: f.type === 'finale' ? 'Facture finale à faire' : 'Facture intermédiaire ' + f.pourcentage + ' %', date: f.dateDemande, quand: 'demandée ' + fr(f.dateDemande) }));
     retards.sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -310,10 +510,13 @@
     const semaine = [];
     S.data.commandes.forEach((c2) => {
       const d = parId(c2.dossierId);
-      if (ouvert(d) && c2.dateLivraison >= t && c2.dateLivraison <= fin) semaine.push({ date: c2.dateLivraison, d, txt: 'Livraison ' + c2.fournisseur });
+      if (ouvert(d) && recepOuverte(c2) && c2.dateLivraison >= t && c2.dateLivraison <= fin) semaine.push({ date: c2.dateLivraison, d, txt: 'Livraison ' + c2.fournisseur });
     });
     ds.filter(ouvert).forEach((d) => {
-      if (d.dateDebut && d.dateDebut >= t && d.dateDebut <= fin) semaine.push({ date: d.dateDebut, d, txt: 'Début de chantier' });
+      const its = interventionsDe(d.id);
+      if (its.length) its.forEach((x) => joursPeriode(x).filter((j) => j.date >= t && j.date <= fin)
+        .forEach((j) => semaine.push({ date: j.date, d, txt: 'Intervention (' + minus(j.creneau) + ')' })));
+      else if (d.dateDebut && d.dateDebut >= t && d.dateDebut <= fin) semaine.push({ date: d.dateDebut, d, txt: 'Début de chantier' });
     });
     semaine.sort((a, b) => (a.date < b.date ? -1 : 1));
 
@@ -340,6 +543,9 @@
     return '<div class="page-head"><div><h1>' + (h < 18 ? 'Bonjour' : 'Bonsoir') + ' ' + esc((u.nom || '').split(' ')[0]) + '</h1>' +
       '<p>' + fr(t, true) + ' · ' + ds.filter(ouvert).length + ' dossiers ouverts</p></div>' +
       '<div class="actions"><button class="btn" data-act="nouveau">+ Nouveau dossier</button><button class="btn" data-act="scan">Lire l\'agenda maintenant</button></div></div>' +
+      '<div class="loupe"><svg class="loupe-ico" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+      '<input type="search" id="loupe" placeholder="Rechercher un dossier : client, chantier, n° de devis ou de commande, document…" autocomplete="off" aria-label="Rechercher un dossier">' +
+      '<div id="loupe-res" class="loupe-res" hidden></div></div>' +
       '<div class="stats">' +
       stat('#/devis', c.devis, 'Devis à faire', c.devisRetard, 'en retard') +
       stat('#/relances', c.relances, 'Devis en attente', c.relancesDues, 'à relancer') +
@@ -419,21 +625,26 @@
     const aCommander = ds.filter((d) => d.etape === 'commande').sort((a, b) => (a.dateValidation < b.dateValidation ? -1 : 1));
     const cmds = S.data.commandes.filter((c) => ouvert(parId(c.dossierId))).sort((a, b) => (a.dateLivraison < b.dateLivraison ? -1 : 1));
     const arcs = cmds.filter((c) => c.arcControle !== 'oui');
-    const livraisons = cmds.filter((c) => c.dateLivraison >= today());
-    const cmdLigne = (c, avecArc) => {
+    const receptions = cmds.filter((c) => c.receptionStatut === 'non_conforme' || (recepOuverte(c) && c.dateLivraison <= today()));
+    const livraisons = cmds.filter((c) => recepOuverte(c) && c.receptionStatut !== 'non_conforme' && c.dateLivraison > today());
+    const cmdLigne = (c, mode) => {
       const d = parId(c.dossierId);
+      const nc = c.receptionStatut === 'non_conforme';
       return ligne(d, {
         titre: nomChantier(d) + ' · ' + c.fournisseur,
-        late: avecArc && enRetard.arc(c), lateLabel: 'ARC en retard',
+        late: mode === 'arc' ? enRetard.arc(c) : mode === 'recep' ? (nc || enRetard.reception(c)) : false,
+        lateLabel: mode === 'arc' ? 'ARC en retard' : nc ? 'à traiter' : 'réception en retard',
         meta: ['Commandé le ' + fr(c.dateCommande), 'Livraison ' + fr(c.dateLivraison, true) + ' (' + relatif(c.dateLivraison) + ')',
+          mode === 'arc' ? '' : pillRecep(c),
           c.arcFichier ? '<a href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">PDF de l\'ARC</a>' : ''],
-        note: c.commentaire,
-        actions: (avecArc ? '<button class="btn primary" data-act="arc" data-id="' + c.id + '" data-v="oui">ARC contrôlé</button>' : '') +
-          '<label class="btn">Joindre le PDF<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + c.dossierId + '"></label>' +
+        note: (mode !== 'arc' && c.receptionCommentaire && c.receptionStatut ? 'Réception : ' + c.receptionCommentaire + '\n' : '') + (c.commentaire || ''),
+        actions: (mode === 'arc' ? '<button class="btn primary" data-act="arc" data-id="' + c.id + '" data-v="oui">ARC contrôlé</button>' +
+            '<label class="btn">Joindre le PDF<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + c.dossierId + '"></label>'
+          : btnRecep(c, mode === 'recep' ? 'primary' : '')) +
           '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button>'
       });
     };
-    return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, ARC à contrôler et livraisons à venir.</p></div></div>' +
+    return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, ARC à contrôler, réceptions et livraisons à venir.</p></div></div>' +
       '<h2 class="section-title">Matériel à commander (' + aCommander.length + ')</h2>' +
       (aCommander.length ? '<div class="list">' + aCommander.map((d) => ligne(d, {
         late: enRetard.materiel(d),
@@ -441,9 +652,11 @@
         actions: '<button class="btn primary" data-act="commande" data-id="' + d.id + '">Commande passée</button>', retour: true
       })).join('') + '</div>' : vide('Rien à commander.')) +
       '<h2 class="section-title">ARC à contrôler (' + arcs.length + ')</h2>' +
-      (arcs.length ? '<div class="list">' + arcs.map((c) => cmdLigne(c, true)).join('') + '</div>' : vide('Tous les ARC sont contrôlés.')) +
+      (arcs.length ? '<div class="list">' + arcs.map((c) => cmdLigne(c, 'arc')).join('') + '</div>' : vide('Tous les ARC sont contrôlés.')) +
+      '<h2 class="section-title">Réceptions à valider (' + receptions.length + ')</h2>' +
+      (receptions.length ? '<div class="list">' + receptions.map((c) => cmdLigne(c, 'recep')).join('') + '</div>' : vide('Aucune réception en attente.')) +
       '<h2 class="section-title">Livraisons à venir (' + livraisons.length + ')</h2>' +
-      (livraisons.length ? '<div class="list">' + livraisons.map((c) => cmdLigne(c, false)).join('') + '</div>' : vide('Aucune livraison prévue.'));
+      (livraisons.length ? '<div class="list">' + livraisons.map((c) => cmdLigne(c, 'avenir')).join('') + '</div>' : vide('Aucune livraison prévue.'));
   }
 
   function vuePlanning() {
@@ -456,16 +669,18 @@
       '<h2 class="section-title">À planifier (' + aPlanifier.length + ')</h2>' +
       (aPlanifier.length ? '<div class="list">' + aPlanifier.map((d) => ligne(d, {
         titre: nomChantier(d),
-        meta: [esc(nomClient(d)), livraisonsDe(d).length ? livraisonsDe(d).map((c) => 'livraison ' + fr(c.dateLivraison)).join(', ') : 'matériel pas encore commandé'],
+        meta: [esc(nomClient(d)), livraisonsDe(d).length ? livraisonsDe(d).map((c) => esc(c.fournisseur) + ' ' + fr(c.dateLivraison) + ' ' + pillRecep(c)).join(' · ') : 'matériel pas encore commandé'],
         actions: '<button class="btn primary" data-act="planifier" data-id="' + d.id + '">Planifier</button>', retour: true
       })).join('') + '</div>' : vide('Aucun chantier à planifier.')) +
       '<h2 class="section-title">Chantiers planifiés (' + planifies.length + ')</h2>' +
       (planifies.length ? '<div class="list">' + planifies.map((d) => ligne(d, {
         titre: nomChantier(d),
-        meta: [fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : ''), esc(nomClient(d)),
-          d.techniciens ? esc(d.techniciens.split(',').map(nomUser).join(', ')) : 'technicien à choisir', pillEtape(d)],
+        meta: [datesChantier(d), esc(nomClient(d)),
+          d.techniciens ? esc(d.techniciens.split(',').map(nomUser).join(', ')) : 'technicien à choisir', pillEtape(d),
+          livraisonsDe(d).length ? (livraisonsDe(d).every((c) => !recepOuverte(c)) ? '<span class="pill green">Matériel reçu</span>'
+            : '<span class="pill amber">' + livraisonsDe(d).filter(recepOuverte).length + ' réception(s) en attente</span>') : ''],
         extra: '<div class="progress-line" style="margin-top:8px;max-width:320px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div>' + (Number(d.avancement) || 0) + ' %</div>',
-        actions: '<a class="btn" href="#/terrain/' + d.id + '">Écran chantier</a><button class="btn" data-act="planifier" data-id="' + d.id + '">Modifier</button>', retour: true
+        actions: '<a class="btn" href="#/terrain/' + d.id + '">Infos chantier</a><button class="btn" data-act="planifier" data-id="' + d.id + '">Modifier</button>', retour: true
       })).join('') + '</div>' : vide('Aucun chantier planifié.'));
   }
 
@@ -477,8 +692,11 @@
         return ligne(d, {
           titre: nomChantier(d),
           meta: [f.type === 'finale' ? '<span class="pill amber">Facture finale</span>' : '<span class="pill">Intermédiaire ' + esc(f.pourcentage) + ' %</span>',
-            esc(nomClient(d)), 'Demandée le ' + fr(f.dateDemande) + ' par ' + esc(f.demandePar), d.numCommande ? 'Commande ' + esc(d.numCommande) : ''],
-          note: f.commentaire,
+            esc(nomClient(d)), 'Demandée le ' + fr(f.dateDemande) + ' par ' + esc(f.demandePar), d.numCommande ? 'Commande ' + esc(d.numCommande) : '',
+            f.type === 'finale' ? pillPV(d) : '',
+            f.type === 'finale' ? (S.data.documents || []).filter((x) => x.dossierId === d.id && x.type === 'pv')
+              .map((x, i) => '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">Voir le PV' + (i ? ' (' + (i + 1) + ')' : '') + '</a>').join(' · ') : ''],
+          note: f.type === 'finale' && d.pvStatut === 'avec_reserves' && d.pvReserves ? 'Réserves : ' + d.pvReserves : f.commentaire,
           actions: '<button class="btn green" data-act="factureFaite" data-id="' + f.id + '">Facture faite</button>' +
             (f.type === 'finale' ? btnRetour(d) : '<button class="btn ghost" data-act="modifFacture" data-id="' + f.id + '">Modifier</button>')
         });
@@ -488,20 +706,22 @@
   function vueArchives() {
     return '<div class="page-head"><div><h1>Archives</h1><p>Dossiers facturés, devis refusés et rendez-vous ignorés.</p></div></div>' +
       '<div class="card" style="margin-bottom:16px"><label class="field" style="margin:0"><span>Rechercher</span>' +
-      '<input type="text" id="search" placeholder="Client, numéro de devis, numéro de commande, chantier…" autocomplete="off"></label></div>' +
+      '<input type="text" id="search" placeholder="Client, numéro de devis, numéro de commande, chantier, nom de document…" autocomplete="off"></label></div>' +
       '<div id="search-results"></div>';
   }
   function resultatsRecherche(q) {
     const n = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     const qq = n(q).trim();
     let ds = S.data.dossiers.slice();
-    if (qq) ds = ds.filter((d) => n([d.client, d.titreRdv, d.numDevis, d.numCommande, d.chantier, d.lieu].join(' ')).indexOf(qq) >= 0);
+    const docsDe = (d) => (S.data.documents || []).filter((x) => x.dossierId === d.id);
+    if (qq) ds = ds.filter((d) => n([d.client, d.titreRdv, d.numDevis, d.numCommande, d.chantier, d.lieu].concat(docsDe(d).map((x) => x.nom)).join(' ')).indexOf(qq) >= 0);
     else ds = ds.filter((d) => !ouvert(d));
     ds.sort((a, b) => ((b.dateCloture || b.majLe || '') > (a.dateCloture || a.majLe || '') ? 1 : -1));
     $('#search-results').innerHTML = ds.length
       ? '<div class="list">' + ds.slice(0, 100).map((d) => ligne(d, {
         meta: [pillEtape(d), d.numDevis && 'Devis ' + esc(d.numDevis), d.numCommande && 'Commande ' + esc(d.numCommande), d.chantier && esc(d.chantier),
-          d.motifRefus && 'Motif : ' + esc(d.motifRefus), d.dateCloture && 'Clos le ' + fr(d.dateCloture)],
+          d.motifRefus && 'Motif : ' + esc(d.motifRefus), d.dateCloture && 'Clos le ' + fr(d.dateCloture),
+          qq ? docsDe(d).filter((x) => n(x.nom).indexOf(qq) >= 0).map((x) => '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">📄 ' + esc(x.nom) + '</a>').join(' · ') : ''],
         retour: !ouvert(d)
       })).join('') + '</div>'
       : vide(qq ? 'Aucun dossier ne correspond.' : 'Aucun dossier archivé.');
@@ -515,10 +735,36 @@
   function vueDossier() {
     const { dossier: d, commandes, factures, commentaires, historique } = S.dossier;
     const idx = PARCOURS.indexOf(d.etape);
-    const steps = '<div class="steps" aria-label="Avancement du dossier">' + PARCOURS.map((e, i) => {
-      const cls = idx < 0 ? '' : i < idx ? 'done' : i === idx ? (e === 'facture' ? 'done' : 'current') : '';
-      return '<div class="step ' + cls + '"><div class="dot">' + (cls === 'done' ? '✓' : '') + '</div>' + esc(ETAPES()[e]) + '</div>';
-    }).join('') + '</div>';
+    // L'étape « matériel » est détaillée en 3 : commandé, ARC contrôlé, réception conforme
+    const cmds = commandes;
+    const sousEtapes = [
+      { lib: 'Matériel commandé', ok: cmds.length > 0 },
+      { lib: 'ARC contrôlé', ok: cmds.length > 0 && cmds.every((c) => c.arcControle === 'oui') },
+      { lib: 'Réception conforme', ok: cmds.length > 0 && cmds.every((c) => c.receptionStatut === 'conforme') }
+    ];
+    const iMat = PARCOURS.indexOf('materiel');
+    let courantVu = false;
+    const etapes = [];
+    PARCOURS.forEach((e, i) => {
+      if (e === 'commande') {
+        // Commande client : validée dès que le devis est accepté (le matériel se suit dans les 3 étapes suivantes)
+        etapes.push({ lib: 'Commande', cls: idx >= i ? 'done' : '' });
+        return;
+      }
+      if (e !== 'materiel') {
+        etapes.push({ lib: ETAPES()[e], cls: idx < 0 ? '' : i < idx ? 'done' : i === idx ? (e === 'facture' ? 'done' : 'current') : '' });
+        return;
+      }
+      sousEtapes.forEach((se) => {
+        let cls = '';
+        if (se.ok) cls = 'done';
+        else if ((idx === iMat || idx === iMat - 1) && !courantVu) { cls = 'current'; courantVu = true; }
+        else if (idx > iMat) cls = 'manque';
+        etapes.push({ lib: se.lib, cls, titre: cls === 'manque' ? 'Étape non validée' : '' });
+      });
+    });
+    const steps = '<div class="steps" aria-label="Avancement du dossier">' + etapes.map((x) =>
+      '<div class="step ' + x.cls + '"' + (x.titre ? ' title="' + x.titre + '"' : '') + '><div class="dot">' + (x.cls === 'done' ? '✓' : x.cls === 'manque' ? '!' : '') + '</div>' + esc(x.lib) + '</div>').join('') + '</div>';
 
     const kv = (pairs) => '<dl class="kv">' + pairs.filter((p) => p[1]).map((p) => '<dt>' + p[0] + '</dt><dd>' + p[1] + '</dd>').join('') + '</dl>';
 
@@ -528,7 +774,7 @@
       case 'devis_envoye': actions = '<button class="btn primary" data-act="reponse" data-id="' + d.id + '">Réponse du client</button>'; break;
       case 'commande': actions = '<button class="btn primary" data-act="commande" data-id="' + d.id + '">Commande matériel passée</button><button class="btn" data-act="planifier" data-id="' + d.id + '">Planifier</button>'; break;
       case 'materiel': actions = '<button class="btn primary" data-act="planifier" data-id="' + d.id + '">Planifier le chantier</button><button class="btn" data-act="commande" data-id="' + d.id + '">Autre commande</button>'; break;
-      case 'planifie': case 'en_cours': actions = '<a class="btn primary" href="#/terrain/' + d.id + '">Écran chantier</a><button class="btn" data-act="commande" data-id="' + d.id + '">Autre commande</button>'; break;
+      case 'planifie': case 'en_cours': actions = '<a class="btn primary" href="#/terrain/' + d.id + '">Infos chantier</a><button class="btn" data-act="commande" data-id="' + d.id + '">Autre commande</button>'; break;
       case 'termine': {
         const ff = factures.find((f) => f.type === 'finale' && f.faite !== 'oui');
         if (ff) actions = '<button class="btn green" data-act="factureFaite" data-id="' + ff.id + '">Facture finale faite</button>';
@@ -556,7 +802,8 @@
         ['Prochaine relance', d.etape === 'devis_envoye' ? fr(d.prochaineRelance, true) + ' (' + relatif(d.prochaineRelance) + ')' : ''],
         ['Notes de relance', esc(d.notesRelance)],
         ['Refus', d.motifRefus ? esc(d.motifRefus) + (d.commentaireRefus ? ' – ' + esc(d.commentaireRefus) : '') : '']
-      ]) : '<p class="muted">Pas encore fait.</p>') + '</div>' +
+      ]) : '<p class="muted">Pas encore fait.</p>') +
+      blocDocsDevis(d, (S.dossier.documents || []).filter((x) => x.type === 'devis')) + '</div>' +
       '<div class="card"><h2>Commande client</h2>' + (d.dateValidation ? kv([
         ['Validé le', fr(d.dateValidation)],
         ['N° de commande', d.numCommande ? esc(d.numCommande) : '<span class="pill amber">à saisir</span>'],
@@ -568,6 +815,7 @@
         '<strong>' + esc(c.fournisseur) + '</strong> <span class="muted small">commandé le ' + fr(c.dateCommande) + '</span>' +
         '<div class="small" style="margin:4px 0 8px">Livraison ' + fr(c.dateLivraison, true) + '</div>' +
         (c.commentaire ? '<div class="small muted" style="margin-bottom:8px">' + esc(c.commentaire) + '</div>' : '') +
+        blocReception(c) +
         '<div class="actions" style="align-items:center"><label class="check"><input type="checkbox" data-arc="' + c.id + '"' + (c.arcControle === 'oui' ? ' checked' : '') + '> ARC contrôlé</label>' +
         (c.arcFichier ? '<a class="small" href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">Voir le PDF</a>' : '') +
         '<label class="btn ghost">' + (c.arcFichier ? 'Remplacer le PDF' : 'Joindre le PDF') + '<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + d.id + '"></label>' +
@@ -578,11 +826,14 @@
       '<div>' +
       '<div class="card"><h2>Chantier' + (d.dateValidation && ouvert(d) ? ' <button class="btn ghost" data-act="planifier" data-id="' + d.id + '">' + (d.dateDebut ? 'Modifier' : 'Planifier') + '</button>' : '') + '</h2>' +
       (d.dateDebut ? kv([
-        ['Dates', fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '')],
         ['Technicien(s)', esc((d.techniciens || '').split(',').filter(Boolean).map(nomUser).join(', '))],
         ['Terminé le', fr(d.dateFinChantier)]
-      ]) + '<div class="progress-line" style="margin:12px 0 4px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div>'
+      ]) + '<div class="progress-line" style="margin:12px 0 4px"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div>' +
+        (interventionsDe(d.id).length ? '<div class="small muted" style="margin:14px 0 4px">Interventions</div>' + listeInterventions(interventionsDe(d.id))
+          : '<p class="small muted">Dates : ' + datesChantier(d) + '</p>')
         : '<p class="muted">Pas encore planifié.</p>') + '</div>' +
+      (['en_cours', 'termine', 'facture'].indexOf(d.etape) >= 0 || d.pvStatut || (S.dossier.documents || []).some((x) => x.type !== 'devis')
+        ? '<div class="card"><h2>PV de réception</h2>' + blocPV(d, S.dossier.documents || []) + '</div>' : '') +
       '<div class="card"><h2>Factures</h2>' + (factures.length ? '<ul class="mini-list">' + factures.map((f) =>
         '<li><span>' + (f.type === 'finale' ? 'Facture finale' : 'Intermédiaire ' + esc(f.pourcentage) + ' %') + '<br><span class="muted small">demandée le ' + fr(f.dateDemande) + (f.commentaire ? ' · ' + esc(f.commentaire) : '') + '</span></span>' +
         '<span class="actions" style="justify-content:flex-end">' +
@@ -592,6 +843,7 @@
             (f.type === 'intermediaire' ? '<button class="btn ghost" data-act="modifFacture" data-id="' + f.id + '">Modifier</button><button class="btn ghost danger" data-act="supprFacture" data-id="' + f.id + '">Supprimer</button>' : '')) +
         '</span></li>').join('') + '</ul>'
         : '<p class="muted">Aucune facture demandée.</p>') + '</div>' +
+      '<div class="card"><h2>Documents</h2>' + blocDocuments(d, S.dossier.documents || []) + '</div>' +
       '<div class="card"><h2>Commentaires et photos du chantier</h2>' + blocCommentaires(commentaires) + '</div>' +
       '<div class="card"><h2>Historique</h2><ul class="history">' + historique.map((h) =>
         '<li><span class="when">' + fr(h.date) + '</span><span><strong>' + esc(h.action) + '</strong>' + (h.note ? ' – ' + esc(h.note) : '') + ' <span class="muted">· ' + esc(h.qui) + '</span></span></li>').join('') + '</ul></div>' +
@@ -599,6 +851,82 @@
       '<div class="actions">' + (btnRetour(d) ? btnRetour(d).replace('btn ghost', 'btn') : '<span class="muted small">Première étape : pas de retour possible.</span>') +
       '<button class="btn danger" data-act="supprDossier" data-id="' + d.id + '">Supprimer le dossier</button></div></div>' +
       '</div></div>';
+  }
+
+  /* PV de réception du chantier */
+  const LIB_PV = { sans_reserves: 'Sans réserves', avec_reserves: 'Avec réserves' };
+  function pillPV(d) {
+    if (!d.pvStatut) return '<span class="pill grey">Pas encore de PV</span>';
+    return '<span class="pill ' + (d.pvStatut === 'avec_reserves' ? 'amber' : 'green') + '">PV ' + LIB_PV[d.pvStatut].toLowerCase() + '</span>';
+  }
+  const lienDrive = (id) => 'https://drive.google.com/file/d/' + esc(id) + '/view';
+  const estImage = (doc) => /^image\//.test(doc.mime || '') || /\.(jpe?g|png|heic|webp)$/i.test(doc.nom || '');
+
+  /** Libellé court du type de fichier : PDF, DOC, XLS… */
+  function typeDoc(x) {
+    const m = (x.nom || '').match(/\.([a-z0-9]{2,4})$/i);
+    if (m) return m[1].toUpperCase();
+    const mime = x.mime || '';
+    if (/pdf/.test(mime)) return 'PDF';
+    if (/word|document/.test(mime)) return 'DOC';
+    if (/sheet|excel/.test(mime)) return 'XLS';
+    if (/^image\//.test(mime)) return 'Photo';
+    return 'Fichier';
+  }
+  const vignette = (x) => '<div class="doc" data-nom="' + esc(sansAccent(x.nom)) + '">' +
+      '<a href="' + lienDrive(x.fichier) + '" target="_blank" rel="noopener">' +
+      (estImage(x) ? '<img src="https://drive.google.com/thumbnail?id=' + esc(x.fichier) + '&sz=w320" alt="" loading="lazy" onerror="this.outerHTML=\'<span class=doc-ico>Photo</span>\'">' : '<span class="doc-ico">' + esc(typeDoc(x)) + '</span>') +
+      '<span class="doc-nom">' + esc(x.nom || 'Document') + '</span></a>' +
+      '<span class="doc-liens"><button class="link" data-act="renommerDoc" data-id="' + x.id + '">renommer</button>' +
+      '<button class="link danger" data-act="supprDoc" data-id="' + x.id + '">retirer</button></span></div>';
+  const sansAccent = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const LIB_TYPE_DOC = { devis: 'Devis', pv: 'PV', reserve: 'Réserve', divers: 'Document' };
+
+  /** Tous les documents du dossier, avec recherche par nom */
+  function blocDocuments(d, docs) {
+    const autres = docs.filter((x) => x.type === 'divers');
+    const lies = docs.filter((x) => x.type !== 'divers');
+    return (docs.length > 1 ? '<input type="text" class="doc-search" data-docsearch placeholder="Rechercher un document par son nom…" autocomplete="off" style="margin-bottom:12px">' : '') +
+      (autres.length ? '<div class="docs">' + autres.map(vignette).join('') + '</div>' : '<p class="muted small" style="margin-top:0">Aucun document déposé.</p>') +
+      (lies.length ? '<div class="small muted" style="margin:14px 0 6px">Aussi dans ce dossier (devis, PV)</div><div class="docs">' +
+        lies.map((x) => vignette(Object.assign({}, x, { nom: x.nom }))
+          .replace('<span class="doc-nom">', '<span class="doc-nom"><span class="doc-type">' + LIB_TYPE_DOC[x.type] + '</span> ')).join('') + '</div>' : '') +
+      '<p class="muted small doc-vide" hidden>Aucun document ne correspond.</p>' +
+      '<div class="actions" style="margin-top:12px"><button class="btn" data-act="deposer" data-id="' + d.id + '">+ Déposer des documents ou photos</button></div>';
+  }
+
+  /** Documents joints au devis (devis signé, annexes, plans…) */
+  function blocDocsDevis(d, docs) {
+    return (docs.length ? '<div class="small muted" style="margin:14px 0 6px">Documents du devis</div><div class="docs">' + docs.map(vignette).join('') + '</div>' : '') +
+      '<div class="actions" style="margin-top:12px"><button class="btn" data-act="docDevis" data-id="' + d.id + '">' + (docs.length ? '+ Ajouter un document' : 'Joindre le devis') + '</button></div>';
+  }
+
+  function blocPV(d, docs) {
+    const pv = docs.filter((x) => x.type === 'pv');
+    const res = docs.filter((x) => x.type === 'reserve');
+    return '<div class="actions" style="align-items:center;margin-bottom:10px">' + pillPV(d) +
+      (d.pvDate ? '<span class="muted small">le ' + fr(d.pvDate) + '</span>' : '') + '</div>' +
+      (d.pvStatut === 'avec_reserves' && d.pvReserves ? '<div class="help" style="white-space:pre-line"><strong>Réserves :</strong> ' + esc(d.pvReserves) + '</div>' : '') +
+      (pv.length ? '<div class="docs">' + pv.map(vignette).join('') + '</div>' : '') +
+      (res.length ? '<div class="small muted" style="margin:10px 0 6px">Photos des réserves</div><div class="docs">' + res.map(vignette).join('') + '</div>' : '') +
+      '<div class="actions" style="margin-top:10px"><button class="btn" data-act="pv" data-id="' + d.id + '">' + (d.pvStatut || pv.length || res.length ? 'Compléter le PV' : 'Joindre le PV') + '</button></div>';
+  }
+
+  /** Réception d'une commande, dans la fiche et sur l'écran chantier */
+  function blocReception(c) {
+    const st = c.receptionStatut || '';
+    const details = st ? [
+      c.dateReception ? 'le ' + fr(c.dateReception) : '', c.receptionPar ? 'par ' + esc(c.receptionPar) : '',
+      c.numBL ? 'BL ' + esc(c.numBL) : ''
+    ].filter(Boolean).join(' · ') : '';
+    return '<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:0 0 10px">' +
+      '<div class="actions" style="align-items:center;justify-content:space-between"><span><strong class="small">Réception</strong> ' + pillRecep(c) +
+      (details ? ' <span class="muted small">' + details + '</span>' : '') + '</span>' +
+      '<span class="actions">' + (st !== 'conforme' ? btnRecep(c, st ? 'primary' : '') : '') +
+      (st ? '<button class="btn ghost" data-act="annulerReception" data-id="' + c.id + '">Annuler</button>' : '') + '</span></div>' +
+      (c.receptionCommentaire && st ? '<div class="small" style="margin-top:6px;white-space:pre-line">' + esc(c.receptionCommentaire) + '</div>' : '') +
+      (c.receptionPhoto ? '<a class="small" href="https://drive.google.com/file/d/' + esc(c.receptionPhoto) + '/view" target="_blank" rel="noopener">Voir la photo de réception</a>' : '') +
+      '</div>';
   }
 
   function blocCommentaires(list) {
@@ -622,25 +950,29 @@
     const miens = ds.filter((d) => (d.techniciens || '').split(',').indexOf(moi) >= 0);
     const autres = ds.filter((d) => miens.indexOf(d) < 0);
     const carte = (d) => '<a class="terrain-card" href="#/terrain/' + d.id + '"><div class="t">' + esc(nomChantier(d)) + '</div>' +
-      '<div class="when">' + (d.dateDebut ? fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '') : 'date à définir') + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</div>' +
+      '<div class="when">' + (datesChantier(d) || 'date à définir') + (d.lieu ? ' · ' + esc(d.lieu) : '') + '</div>' +
       '<div class="progress-line"><div class="progress"><span style="width:' + (Number(d.avancement) || 0) + '%"></span></div><strong>' + (Number(d.avancement) || 0) + ' %</strong></div></a>';
-    return '<div class="page-head"><div><h1>Mes chantiers</h1><p>Touchez un chantier pour noter l\'avancement.</p></div></div>' +
+    return '<div class="page-head"><div><h1>Infos chantiers</h1><p>Touchez un chantier pour noter l\'avancement.</p></div></div>' +
       (miens.length ? miens.map(carte).join('') : (autres.length ? '' : vide('Aucun chantier planifié pour l\'instant.'))) +
       (autres.length ? '<h2 class="section-title">' + (miens.length ? 'Autres chantiers' : 'Chantiers planifiés') + '</h2>' + autres.map(carte).join('') : '');
   }
 
   function vueTerrainChantier() {
-    const { dossier: d, commentaires, factures } = S.dossier;
+    const { dossier: d, commentaires, factures, commandes } = S.dossier;
     const pct = Number(d.avancement) || 0;
     const fini = d.etape === 'termine' || d.etape === 'facture';
     const inter = factures.filter((f) => f.type === 'intermediaire');
-    return '<a class="back" href="#/terrain">← Mes chantiers</a>' +
+    return '<a class="back" href="#/terrain">← Infos chantiers</a>' +
       '<div class="page-head"><div><h1>' + esc(nomChantier(d)) + '</h1><p>' + esc(nomClient(d)) +
       (d.lieu ? ' · <a href="https://maps.google.com/?q=' + encodeURIComponent(d.lieu) + '" target="_blank" rel="noopener">' + esc(d.lieu) + '</a>' : '') +
-      (d.dateDebut ? '<br>' + fr(d.dateDebut, true) + (d.dateFin && d.dateFin !== d.dateDebut ? ' → ' + fr(d.dateFin, true) : '') : '') + '</p></div></div>' +
+      '</p></div></div>' +
+      (interventionsDe(d.id).length ? '<div class="card"><h2>Interventions prévues</h2>' + listeInterventions(interventionsDe(d.id)) + '</div>' : '') +
       '<div class="card"><h2>Avancement</h2><div class="slider-box"><div class="pct" id="pct-val">' + pct + ' %</div>' +
       '<input type="range" min="0" max="100" step="5" value="' + pct + '" id="pct" aria-label="Avancement du chantier en pourcentage"' + (fini ? ' disabled' : '') + '></div>' +
       '<p class="muted small" style="text-align:center;margin:4px 0 0">Glissez puis relâchez : c\'est enregistré tout seul.</p></div>' +
+      (commandes && commandes.length ? '<div class="card"><h2>Matériel</h2>' + commandes.map((c) =>
+        '<div style="margin-bottom:6px"><strong>' + esc(c.fournisseur) + '</strong> <span class="muted small">livraison ' + fr(c.dateLivraison, true) + '</span></div>' +
+        blocReception(c)).join('') + '</div>' : '') +
       '<div class="card"><h2>Ajouter un commentaire</h2>' +
       '<label class="field"><span class="muted small" style="font-weight:400">Pour dicter, touchez le micro du clavier.</span>' +
       '<textarea id="com-txt" rows="4" placeholder="Ce qui a été fait, ce qui manque, un souci…"></textarea></label>' +
@@ -651,6 +983,8 @@
         '<button class="btn green big" data-act="termine" data-id="' + d.id + '">Chantier terminé</button></div>' +
         (inter.length ? '<p class="muted small" style="margin-bottom:0">Déjà demandé : ' + inter.map((f) => esc(f.pourcentage) + ' %' + (f.faite === 'oui' ? ' (facturé)' : '')).join(', ') + '</p>' : '') + '</div>'
         : '<div class="card"><p style="margin:0"><span class="pill green">Chantier terminé</span> ' + (d.dateFinChantier ? 'le ' + fr(d.dateFinChantier) : '') + '</p></div>') +
+      '<div class="card"><h2>PV de réception</h2>' + blocPV(d, S.dossier.documents || []) + '</div>' +
+      '<div class="card"><h2>Documents</h2>' + blocDocuments(d, S.dossier.documents || []) + '</div>' +
       '<div class="card"><h2>Historique du chantier</h2>' + blocCommentaires(commentaires) + '</div>';
   }
 
@@ -658,6 +992,8 @@
    * RÉGLAGES
    * ================================================================ */
   const LIB_DELAI = {
+    livraison: 'Prévenir combien de jours avant la livraison (0 = le jour même)',
+    reception: 'Premier rappel, en jours après la date de livraison prévue (0 = le jour même)',
     devis_a_faire: 'Premier rappel, en jours après le rendez-vous',
     relance_client: 'Délai par défaut, en jours après l\'envoi du devis',
     commande_materiel: 'Premier rappel, en jours après la validation du devis',
@@ -666,11 +1002,15 @@
     a_facturer: 'Premier rappel, en jours après la fin du chantier (0 = le jour même)'
   };
   const AIDE_MAIL = {
+    reception: 'Envoyé quand la réception n\'est pas validée à la date de livraison prévue, puis selon le rythme, tant qu\'elle n\'est pas « conforme ».',
+    reception_nc: 'Envoyé tout de suite quand une livraison est déclarée non conforme.',
+    planning_tech: 'Envoyé tout de suite aux techniciens choisis sur le chantier, quand on les planifie ou qu\'on modifie le planning. Le champ « Envoyer à » n\'est pas utilisé pour ce message.',
+    pv_reserves: 'Envoyé tout de suite quand un PV avec réserves est enregistré. Le PV et les photos sont joints.',
+    a_facturer: 'Envoyé tout de suite quand le chantier est terminé, puis relancé selon le rythme. Les documents du PV sont joints.',
     nouvelle_commande: 'Envoyé tout de suite quand un devis est validé.',
-    livraison: 'Envoyé une seule fois, la veille de chaque livraison.',
+    livraison: 'Envoyé une seule fois par livraison, le nombre de jours choisi avant la date prévue.',
     recap: 'Un seul mail qui liste tout ce qui reste à faire.',
-    facture_inter: 'Envoyé tout de suite à la demande du technicien, puis relancé selon le rythme.',
-    a_facturer: 'Envoyé tout de suite quand le chantier est terminé, puis relancé selon le rythme.'
+    facture_inter: 'Envoyé tout de suite à la demande du technicien, puis relancé selon le rythme.'
   };
   const LETTRES = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
@@ -683,8 +1023,9 @@
       const jours = String(m.jours || '').split(',');
       const k = m.cle;
       const avecDelai = !!LIB_DELAI[k];
-      const avecRythme = ['nouvelle_commande', 'livraison', 'recap'].indexOf(k) < 0;
-      const avecHoraire = k !== 'nouvelle_commande';
+      const avecRythme = ['nouvelle_commande', 'livraison', 'recap', 'reception_nc', 'pv_reserves', 'planning_tech'].indexOf(k) < 0;
+      const avecHoraire = ['nouvelle_commande', 'reception_nc', 'pv_reserves', 'planning_tech'].indexOf(k) < 0;
+      const avecCopie = ['pv_reserves', 'reception_nc', 'a_facturer', 'facture_inter'].indexOf(k) >= 0;
       const resume = m.active === 'oui'
         ? (avecHoraire ? jours.filter(Boolean).map((j) => LETTRES[Number(j) - 1]).join(' ') + ' à ' + m.heure + ' h' : 'immédiat')
         : 'désactivé';
@@ -702,6 +1043,7 @@
           '<label class="field"><span>Heure d\'envoi</span><select name="heure">' + heures(m.heure) + '</select><small>Le mail part dans l\'heure choisie.</small></label></div>' : '') +
         '<label class="field"><span>Objet du mail</span><input type="text" name="objet" value="' + esc(m.objet) + '"></label>' +
         '<label class="field"><span>Texte du mail</span><textarea name="texte" rows="5">' + esc(m.texte) + '</textarea></label>' +
+        (avecCopie ? '<label class="check" style="margin:-4px 0 14px"><input type="checkbox" name="copieTechniciens"' + (m.copieTechniciens === 'oui' ? ' checked' : '') + '> Envoyer aussi aux techniciens du chantier</label>' : '') +
         '<button type="button" class="btn" data-act="mailTest" data-cle="' + k + '">M\'envoyer un essai</button>' +
         '</div></details>';
     }).join('');
@@ -718,6 +1060,10 @@
       '<div class="row3"><label class="field"><span>Lecture automatique de l\'agenda</span><select name="agendaActif">' + opt('oui', r.agendaActif, 'Oui, toutes les heures') + opt('non', r.agendaActif, 'Non') + '</select></label>' +
       '<label class="field"><span>Regarder en arrière (jours)</span><input type="number" min="1" name="joursAgendaPasse" value="' + esc(r.joursAgendaPasse) + '"></label>' +
       '<label class="field"><span>Regarder en avant (jours)</span><input type="number" min="1" name="joursAgendaFutur" value="' + esc(r.joursAgendaFutur) + '"></label></div>' +
+      '<div class="field"><span>Horaires des interventions (écrites dans l\'agenda)</span><div class="row2">' +
+      '<label class="field"><span class="small muted" style="font-weight:400">Matin</span><div class="actions"><input type="time" name="matinDebut" value="' + esc(r.matinDebut || '08:00') + '"> à <input type="time" name="matinFin" value="' + esc(r.matinFin || '12:00') + '"></div></label>' +
+      '<label class="field"><span class="small muted" style="font-weight:400">Après-midi</span><div class="actions"><input type="time" name="apremDebut" value="' + esc(r.apremDebut || '13:30') + '"> à <input type="time" name="apremFin" value="' + esc(r.apremFin || '17:30') + '"></div></label>' +
+      '</div><small>Une journée va du début du matin à la fin de l\'après-midi.</small></div>' +
       '<label class="field"><span>Identifiant de l\'agenda</span><input type="text" name="agendaId" value="' + esc(r.agendaId) + '" placeholder="Vide = agenda principal du compte contact"></label>' +
       '<h2 style="margin-top:8px">Mode test</h2>' +
       '<div class="row2"><label class="field"><span>Mode test</span><select name="modeTest">' + opt('oui', r.modeTest, 'Activé') + opt('non', r.modeTest, 'Désactivé (utilisation réelle)') + '</select>' +
@@ -727,12 +1073,12 @@
 
       '<div class="card"><h2>Mails de rappel</h2>' +
       '<div class="help">Dans l\'objet et le texte, ces mots entre accolades sont remplacés automatiquement : ' +
-      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
+      ['client', 'numero_devis', 'date_rdv', 'numero_commande', 'date_validation', 'chantier', 'fournisseur', 'date_livraison', 'quand', 'reception', 'receptionne_par', 'numero_bl', 'pv', 'reserves', 'periodes', 'action', 'lieu', 'avancement', 'pourcentage', 'commentaire', 'prochaine_relance', 'entreprise']
         .map((x) => '<code>{' + x + '}</code>').join(' ') + '. Un bouton « Ouvrir le dossier » est ajouté en bas de chaque mail.</div>' +
       mails + '<button class="btn primary" data-act="saveMails" style="margin-top:6px">Enregistrer les mails</button></div>' +
 
-      '<div class="card"><h2>Utilisateurs</h2><p class="muted small" style="margin-top:0">Seules ces adresses Google peuvent se connecter. Elles ont aussi accès aux PDF et photos dans Google Drive.</p>' +
-      '<div style="overflow-x:auto"><table class="users"><thead><tr><th>Adresse Gmail</th><th>Nom</th><th>Rôle</th><th>Actif</th><th></th></tr></thead><tbody id="users-body">' + users + '</tbody></table></div>' +
+      '<div class="card"><h2>Utilisateurs</h2><p class="muted small" style="margin-top:0">Seules ces adresses Google peuvent se connecter. Elles ont aussi accès aux PDF et photos dans Google Drive. « Téléphone » demande que la personne ait activé les notifications dans « Mon téléphone » ; sinon, elle reçoit le mail.</p>' +
+      '<div style="overflow-x:auto"><table class="users"><thead><tr><th>Adresse Gmail</th><th>Nom</th><th>Rôle</th><th>Reçoit les rappels par</th><th>Actif</th><th></th></tr></thead><tbody id="users-body">' + users + '</tbody></table></div>' +
       '<div class="actions" style="margin-top:12px"><button class="btn" data-act="addUser">+ Ajouter une personne</button><button class="btn primary" data-act="saveUsers">Enregistrer les utilisateurs</button></div></div>' +
 
       '<div class="card"><h2>Données de démonstration</h2><p class="muted small" style="margin-top:0">Neuf dossiers fictifs à toutes les étapes, pour essayer l\'appli. Ils sont marqués « démo » et se suppriment d\'un clic sans toucher aux vrais dossiers.</p>' +
@@ -743,6 +1089,8 @@
     return '<tr data-user="' + i + '"><td><input type="email" name="email" value="' + esc(u.email) + '" placeholder="prenom@gmail.com"></td>' +
       '<td><input type="text" name="nom" value="' + esc(u.nom) + '" placeholder="Prénom Nom"></td>' +
       '<td><select name="role"><option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>Administration</option><option value="technicien"' + (u.role === 'technicien' ? ' selected' : '') + '>Technicien</option></select></td>' +
+      '<td><select name="canal">' + [['mail', 'Mail'], ['tel', 'Téléphone'], ['both', 'Les deux']].map((c) =>
+        '<option value="' + c[0] + '"' + ((u.canal || 'mail') === c[0] ? ' selected' : '') + '>' + c[1] + '</option>').join('') + '</select></td>' +
       '<td><input type="checkbox" name="actif"' + (u.actif !== 'non' ? ' checked' : '') + ' aria-label="Actif"></td>' +
       '<td><button class="btn ghost" data-act="delUser" aria-label="Retirer">✕</button></td></tr>';
   }
@@ -754,7 +1102,7 @@
     const dlg = $('#modal');
     dlg.innerHTML = '<form method="dialog" novalidate><header><h2>' + esc(opts.titre) + '</h2>' + (opts.sousTitre ? '<p>' + opts.sousTitre + '</p>' : '') + '</header>' +
       '<div class="body"><p class="err" hidden></p>' + opts.corps + '</div>' +
-      '<footer><button type="button" class="btn" data-close>Annuler</button><button type="submit" class="btn ' + (opts.classe || 'primary') + '">' + esc(opts.bouton || 'Enregistrer') + '</button></footer></form>';
+      '<footer><button type="button" class="btn" data-close>' + esc(opts.annuler || 'Annuler') + '</button><button type="submit" class="btn ' + (opts.classe || 'primary') + '">' + esc(opts.bouton || 'Enregistrer') + '</button></footer></form>';
     const form = $('form', dlg);
     $('[data-close]', dlg).onclick = () => dlg.close();
     if (opts.apres) opts.apres(form);
@@ -786,6 +1134,50 @@
   const champ = (label, html, aide) => '<label class="field"><span>' + label + '</span>' + html + (aide ? '<small>' + aide + '</small>' : '') + '</label>';
   const input = (name, value, type, attrs) => '<input type="' + (type || 'text') + '" name="' + name + '" value="' + esc(value || '') + '" ' + (attrs || '') + '>';
 
+  /* Champs communs du PV : choix sans / avec réserves, fichiers, détail des réserves */
+  function champsPV(avecAucun, d) {
+    const st = (d && d.pvStatut) || '';
+    const radio = (val, label) => '<label><input type="radio" name="pvStatut" value="' + val + '"' + (st === val || (!st && !val) ? ' checked' : '') + '><span>' + label + '</span></label>';
+    return '<div class="choices" role="radiogroup" aria-label="PV de réception">' +
+      (avecAucun ? radio('', 'Pas de PV') : '') + radio('sans_reserves', 'Sans réserves') + radio('avec_reserves', 'Avec réserves') + '</div>' +
+      '<div data-pv="fichiers"' + (avecAucun ? ' hidden' : '') + '>' +
+      champ('PV signé (photos ou fichiers)', '<input type="file" name="pvFichiers" accept="image/*,application/pdf" multiple>', 'Vous pouvez en choisir plusieurs : par exemple le recto et le verso.') + '</div>' +
+      '<div data-pv="reserves"' + (st === 'avec_reserves' ? '' : ' hidden') + '>' +
+      champ('Détail des réserves', '<textarea name="reserves" rows="3" placeholder="Ce que le client a noté…">' + esc((d && d.pvReserves) || '') + '</textarea>') +
+      champ('Photos des réserves', '<input type="file" name="reserveFichiers" accept="image/*" multiple>') +
+      '<p class="muted small">Un mail part tout de suite, avec le PV et les photos.</p></div>';
+  }
+  function brancherPV(form) {
+    const maj = () => {
+      const r = form.querySelector('input[name=pvStatut]:checked');
+      const t = r ? r.value : '';
+      form.querySelector('[data-pv=fichiers]').hidden = !t;
+      form.querySelector('[data-pv=reserves]').hidden = t !== 'avec_reserves';
+    };
+    form.querySelectorAll('input[name=pvStatut]').forEach((r) => { r.onchange = maj; });
+    maj();
+  }
+  function lirePV(v, form, facultatif) {
+    const statut = v.pvStatut || '';
+    if (!facultatif && !statut) throw new Error('Indiquez si le PV est sans réserves ou avec réserves.');
+    const pv = Array.from(form.querySelector('input[name=pvFichiers]').files || []);
+    const res = statut === 'avec_reserves' ? Array.from(form.querySelector('input[name=reserveFichiers]').files || []) : [];
+    return { statut, reserves: statut === 'avec_reserves' ? (v.reserves || '') : '', pv: statut ? pv : [], res };
+  }
+  async function envoyerDocs(dossierId, type, fichiers) {
+    for (let i = 0; i < fichiers.length; i++) {
+      toast('Envoi du document ' + (i + 1) + ' sur ' + fichiers.length + '…');
+      await televerser(fichiers[i], type, dossierId);
+    }
+  }
+  async function envoyerFichiersPV(dossierId, pv) {
+    const tous = pv.pv.map((f) => ['pv', f]).concat(pv.res.map((f) => ['reserve', f]));
+    for (let i = 0; i < tous.length; i++) {
+      toast('Envoi du document ' + (i + 1) + ' sur ' + tous.length + '…');
+      await televerser(tous[i][1], tous[i][0], dossierId);
+    }
+  }
+
   const FORMS = {
     devisFait(id) {
       const d = parId(id);
@@ -794,11 +1186,69 @@
         corps: champ('Numéro de devis *', input('numDevis', '', 'text', 'required')) +
           champ('Nom du client *', input('client', d.client, 'text', 'required')) +
           champ('Commentaire', '<textarea name="commentaire" rows="3"></textarea>') +
+          champ('Document(s) du devis', '<input type="file" name="devisFichiers" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx" multiple>', 'Facultatif. Vous pouvez en choisir plusieurs.') +
           '<p class="muted small">Une coche verte ✅ sera ajoutée au rendez-vous dans l\'agenda.</p>',
-        valider: (v) => {
+        valider: async (v, form) => {
           if (!v.numDevis) throw new Error('Le numéro de devis est obligatoire.');
           if (!v.client) throw new Error('Le nom du client est obligatoire.');
-          return agir('devisFait', { id, numDevis: v.numDevis, client: v.client, commentaire: v.commentaire }, 'Devis enregistré');
+          const fichiers = Array.from(form.querySelector('input[name=devisFichiers]').files || []);
+          await agir('devisFait', { id, numDevis: v.numDevis, client: v.client, commentaire: v.commentaire }, 'Devis enregistré');
+          await envoyerDocs(id, 'devis', fichiers);
+        }
+      });
+    },
+    deposer(id) {
+      const d = S.dossier && S.dossier.dossier.id === id ? S.dossier.dossier : parId(id);
+      fenetre({
+        titre: 'Déposer des documents ou photos', sousTitre: esc(nomChantier(d)),
+        corps: champ('Fichiers *', '<input type="file" name="fichiers" multiple>', 'Photos, PDF, Word, Excel… Vous pouvez en choisir plusieurs.') +
+          '<div data-noms></div>',
+        bouton: 'Déposer',
+        apres: (form) => {
+          const inp = form.querySelector('input[name=fichiers]');
+          inp.onchange = () => {
+            form.querySelector('[data-noms]').innerHTML = Array.from(inp.files).map((f, i) =>
+              champ('Nom du document ' + (Array.from(inp.files).length > 1 ? (i + 1) + ' ' : '') + '<span class="muted small" style="font-weight:400">(' + esc(f.name) + ')</span>',
+                '<input type="text" name="nom_' + i + '" value="' + esc(f.name.replace(/\.[a-z0-9]{2,5}$/i, '')) + '">')).join('');
+            const premier = form.querySelector('[data-noms] input');
+            if (premier) { premier.focus(); premier.select(); }
+          };
+        },
+        valider: async (v, form) => {
+          const fichiers = Array.from(form.querySelector('input[name=fichiers]').files || []);
+          if (!fichiers.length) throw new Error('Choisissez au moins un fichier.');
+          for (let i = 0; i < fichiers.length; i++) {
+            if (!v['nom_' + i]) throw new Error('Donnez un nom au document ' + (i + 1) + '.');
+          }
+          for (let i = 0; i < fichiers.length; i++) {
+            toast('Envoi du document ' + (i + 1) + ' sur ' + fichiers.length + '…');
+            await televerser(fichiers[i], 'divers', d.id, '', v['nom_' + i]);
+          }
+        }
+      });
+    },
+    renommerDoc(id) {
+      const doc = ((S.dossier && S.dossier.documents) || S.data.documents || []).find((x) => x.id === id);
+      fenetre({
+        titre: 'Renommer le document',
+        corps: champ('Nouveau nom', input('nom', (doc.nom || '').replace(/\.[a-z0-9]{2,5}$/i, ''))),
+        bouton: 'Renommer',
+        valider: (v) => {
+          if (!v.nom) throw new Error('Indiquez un nom.');
+          return agir('renommerDocument', { id, nom: v.nom }, 'Document renommé');
+        }
+      });
+    },
+    docDevis(id) {
+      const d = S.dossier && S.dossier.dossier.id === id ? S.dossier.dossier : parId(id);
+      fenetre({
+        titre: 'Documents du devis', sousTitre: esc(nomClient(d)) + (d.numDevis ? ' · devis ' + esc(d.numDevis) : ''),
+        corps: champ('Document(s) à joindre *', '<input type="file" name="devisFichiers" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx" multiple>', 'Vous pouvez en choisir plusieurs.'),
+        bouton: 'Joindre',
+        valider: async (v, form) => {
+          const fichiers = Array.from(form.querySelector('input[name=devisFichiers]').files || []);
+          if (!fichiers.length) throw new Error('Choisissez au moins un document.');
+          await envoyerDocs(d.id, 'devis', fichiers);
         }
       });
     },
@@ -858,22 +1308,88 @@
         valider: async (v) => { await agir('modifierCommande', Object.assign({ id }, v), 'Commande modifiée'); }
       });
     },
+    /** Avant de planifier : alerte si des étapes précédentes ne sont pas validées */
     planifier(id) {
+      const d = parId(id);
+      const manque = interventionsDe(id).length || d.dateDebut ? [] : etapesManquantes(d);
+      if (!manque.length) { FORMS.planning(id); return; }
+      fenetre({
+        titre: 'Des étapes ne sont pas validées', sousTitre: esc(nomClient(d)),
+        corps: '<ul class="manques">' + manque.map((m) => '<li>' + esc(m) + '</li>').join('') + '</ul>',
+        bouton: 'Planifier quand même', annuler: 'Ne pas planifier',
+        valider: () => { setTimeout(() => FORMS.planning(id), 60); }
+      });
+    },
+    planning(id) {
       const d = parId(id);
       const techs = S.data.users.filter((u) => u.actif !== 'non');
       const choisis = (d.techniciens || '').split(',');
+      let its = interventionsDe(id).map((x) => ({ id: x.id, date: x.date, creneau: x.creneau, dateFin: x.dateFin || x.date, creneauFin: x.creneauFin || x.creneau, travaux: x.travaux }));
+      // ancien planning (dates de début et de fin) : une seule période
+      if (!its.length && d.dateDebut) its.push({ date: d.dateDebut, creneau: 'journee', dateFin: d.dateFin || d.dateDebut, creneauFin: 'journee', travaux: '' });
+      if (!its.length) its = [{ date: '', creneau: 'journee', dateFin: '', creneauFin: 'journee', travaux: '' }];
+      const choixCreneau = (name, val) => '<select name="' + name + '" aria-label="Créneau">' + Object.keys(LIB_CRENEAU).map((k) =>
+        '<option value="' + k + '"' + (val === k ? ' selected' : '') + '>' + LIB_CRENEAU[k] + '</option>').join('') + '</select>';
+      const ligneIt = (x) => '<div class="interv-ligne" data-it="' + esc(x.id || '') + '">' +
+        '<div class="interv-haut"><span class="interv-lib">Du</span>' + input('it_date', x.date, 'date', 'aria-label="Date de début"') + choixCreneau('it_creneau', x.creneau) +
+        '<button type="button" class="btn ghost danger" data-retirer-it aria-label="Retirer cette période">✕</button></div>' +
+        '<div class="interv-haut"><span class="interv-lib">Au</span>' + input('it_fin', x.dateFin && x.dateFin !== x.date ? x.dateFin : '', 'date', 'aria-label="Date de fin"') +
+        '<span data-fin-creneau' + (x.dateFin && x.dateFin !== x.date ? '' : ' hidden') + '>' + choixCreneau('it_creneau_fin', x.creneauFin || 'journee') + '</span><span></span></div>' +
+        '<div class="small muted interv-aide" data-aide></div>' +
+        '<textarea name="it_travaux" rows="2" placeholder="Travaux à faire sur cette période…">' + esc(x.travaux || '') + '</textarea></div>';
+      const majLigne = (el) => {
+        const deb = el.querySelector('[name=it_date]').value;
+        const fin = el.querySelector('[name=it_fin]').value;
+        const plusieurs = deb && fin && fin > deb;
+        el.querySelector('[data-fin-creneau]').hidden = !plusieurs;
+        const aide = el.querySelector('[data-aide]');
+        if (fin && deb && fin < deb) aide.textContent = 'La date de fin est avant la date de début.';
+        else if (plusieurs) {
+          const j = joursPeriode({ date: deb, dateFin: fin, creneau: 'journee', creneauFin: 'journee' }).length;
+          aide.textContent = j + ' jours, un rendez-vous par jour.' + (j > 2 ? ' Les jours entre le premier et le dernier sont des journées entières.' : '');
+        } else aide.textContent = 'Laissez « Au » vide pour une seule journée.';
+      };
+      const r = S.data.reglages;
       fenetre({
         titre: d.dateDebut ? 'Modifier le planning' : 'Planifier le chantier', sousTitre: esc(nomClient(d)),
         corps: champ('Nom du chantier', input('chantier', d.chantier || nomClient(d))) +
-          '<div class="row2">' + champ('Début *', input('dateDebut', d.dateDebut, 'date')) + champ('Fin', input('dateFin', d.dateFin, 'date'), 'Vide = un seul jour') + '</div>' +
+          '<div class="field"><span>Périodes d\'intervention *</span><div data-its>' + its.map(ligneIt).join('') + '</div>' +
+          '<button type="button" class="btn" data-ajout-it>+ Ajouter une période</button>' +
+          '<small>Journée : ' + esc(r.matinDebut || '08:00') + '–' + esc(r.apremFin || '17:30') + ' · Matin : ' + esc(r.matinDebut || '08:00') + '–' + esc(r.matinFin || '12:00') +
+          ' · Après-midi : ' + esc(r.apremDebut || '13:30') + '–' + esc(r.apremFin || '17:30') + '. Un rendez-vous par jour dans l\'agenda, avec les travaux dans les notes.</small></div>' +
           '<div class="field"><span>Technicien(s)</span><div class="stack">' + techs.map((u) =>
             '<label class="check"><input type="checkbox" name="tech_' + esc(u.email) + '"' + (choisis.indexOf(u.email) >= 0 ? ' checked' : '') + '> ' + esc(u.nom || u.email) +
             (u.role === 'admin' ? ' <span class="muted small">(administration)</span>' : '') + '</label>').join('') + '</div></div>',
-        valider: (v) => {
-          if (!v.dateDebut) throw new Error('Indiquez la date de début.');
-          if (v.dateFin && v.dateFin < v.dateDebut) throw new Error('La date de fin est avant la date de début.');
+        apres: (form) => {
+          const zone = form.querySelector('[data-its]');
+          zone.querySelectorAll('.interv-ligne').forEach(majLigne);
+          zone.oninput = (ev) => { const l = ev.target.closest('.interv-ligne'); if (l) majLigne(l); };
+          form.querySelector('[data-ajout-it]').onclick = () => {
+            const lignes = zone.querySelectorAll('.interv-ligne');
+            const der = lignes.length ? (lignes[lignes.length - 1].querySelector('[name=it_fin]').value || lignes[lignes.length - 1].querySelector('[name=it_date]').value) : '';
+            zone.insertAdjacentHTML('beforeend', ligneIt({ date: der ? addDays(der, 1) : '', creneau: 'journee', dateFin: '', creneauFin: 'journee', travaux: '' }));
+            majLigne(zone.lastElementChild);
+          };
+          zone.onclick = (ev) => {
+            const b = ev.target.closest('[data-retirer-it]');
+            if (b) b.closest('.interv-ligne').remove();
+          };
+        },
+        valider: (v, form) => {
+          const lignes = Array.from(form.querySelectorAll('.interv-ligne')).map((el) => ({
+            id: el.dataset.it || '',
+            date: el.querySelector('[name=it_date]').value,
+            creneau: el.querySelector('[name=it_creneau]').value,
+            dateFin: el.querySelector('[name=it_fin]').value || el.querySelector('[name=it_date]').value,
+            creneauFin: el.querySelector('[name=it_creneau_fin]').value,
+            travaux: el.querySelector('[name=it_travaux]').value.trim()
+          }));
+          if (!lignes.length) throw new Error('Ajoutez au moins une période d\'intervention.');
+          if (lignes.some((x) => !x.date)) throw new Error('Indiquez la date de début de chaque période (ou retirez la ligne vide).');
+          if (lignes.some((x) => x.dateFin < x.date)) throw new Error('Une période se termine avant de commencer.');
+          lignes.forEach((x) => { if (x.dateFin === x.date) x.creneauFin = x.creneau; });
           const t = Object.keys(v).filter((k) => k.indexOf('tech_') === 0).map((k) => k.slice(5));
-          return agir('planifier', { id, chantier: v.chantier, dateDebut: v.dateDebut, dateFin: v.dateFin || v.dateDebut, techniciens: t.join(',') }, 'Chantier planifié');
+          return agir('planifier', { id, chantier: v.chantier, interventions: lignes, techniciens: t.join(',') }, 'Chantier planifié et inscrit dans l\'agenda');
         }
       });
     },
@@ -911,10 +1427,31 @@
       const d = S.dossier ? S.dossier.dossier : parId(id);
       fenetre({
         titre: 'Chantier terminé ?', sousTitre: esc(nomChantier(d)),
-        corps: '<p>L\'avancement passera à 100 % et un mail préviendra qu\'il faut facturer.</p>' + champ('Commentaire de fin (facultatif)', '<textarea name="commentaire" rows="3"></textarea>'),
+        corps: '<p>L\'avancement passera à 100 % et un mail préviendra qu\'il faut facturer.</p>' +
+          champ('Commentaire de fin (facultatif)', '<textarea name="commentaire" rows="3"></textarea>') +
+          '<h3 style="font-size:15px;margin:18px 0 10px;color:var(--navy)">PV de réception (facultatif)</h3>' + champsPV(true),
         bouton: 'Oui, chantier terminé', classe: 'green',
-        valider: async (v) => {
-          await agir('chantierTermine', { id, commentaire: v.commentaire }, 'Chantier terminé, facturation prévenue');
+        apres: brancherPV,
+        valider: async (v, form) => {
+          const pv = lirePV(v, form, true);
+          await envoyerFichiersPV(d.id, pv);
+          await agir('chantierTermine', { id, commentaire: v.commentaire, pvStatut: pv.statut, reserves: pv.reserves },
+            pv.statut === 'avec_reserves' ? 'Chantier terminé, réserves signalées par mail' : 'Chantier terminé, facturation prévenue');
+        }
+      });
+    },
+    pv(id) {
+      const d = S.dossier && S.dossier.dossier.id === id ? S.dossier.dossier : parId(id);
+      fenetre({
+        titre: 'PV de réception', sousTitre: esc(nomChantier(d)) + ' · vous pouvez ajouter des documents à ceux déjà joints',
+        corps: champsPV(false, d),
+        bouton: 'Enregistrer le PV',
+        apres: brancherPV,
+        valider: async (v, form) => {
+          const pv = lirePV(v, form, false);
+          await envoyerFichiersPV(d.id, pv);
+          await agir('enregistrerPV', { id, pvStatut: pv.statut, reserves: pv.reserves },
+            pv.statut === 'avec_reserves' ? 'PV enregistré, réserves signalées par mail' : 'PV enregistré');
         }
       });
     },
@@ -957,6 +1494,42 @@
           if (!v.client) throw new Error('Le nom du client est obligatoire.');
           const r = await agir('creerDossier', v, 'Dossier créé');
           if (r && r.resultat) location.hash = '#/dossier/' + r.resultat;
+        }
+      });
+    },
+    reception(id) {
+      const c = S.data.commandes.find((x) => x.id === id);
+      const d = parId(c.dossierId);
+      fenetre({
+        titre: 'Réception du matériel', sousTitre: esc(nomChantier(d)) + ' · ' + esc(c.fournisseur) + ' · attendu le ' + fr(c.dateLivraison),
+        corps: '<div class="choices" role="radiogroup" aria-label="État de la livraison">' +
+          '<label><input type="radio" name="statut" value="conforme"><span>Conforme</span></label>' +
+          '<label><input type="radio" name="statut" value="non_conforme"><span>Non conforme</span></label>' +
+          '<label><input type="radio" name="statut" value="partielle"><span>Partielle</span></label></div>' +
+          '<div data-pane="partielle" hidden>' + champ('Le reste arrive le *', input('nouvelleDate', '', 'date')) + '</div>' +
+          '<div data-pane="non_conforme" hidden><p class="help">La commande reste ouverte, en attente de traitement, et un mail prévient l\'administration.</p></div>' +
+          '<div class="row2">' + champ('Reçu le', input('dateReception', today(), 'date')) + champ('Réceptionné par', input('receptionPar', S.data.user.nom || '')) + '</div>' +
+          champ('N° du bon de livraison', input('numBL', '')) +
+          champ('Commentaire', '<textarea name="commentaire" rows="3" placeholder="Manquant, abîmé, erreur de référence…"></textarea>') +
+          champ('Photo (bon de livraison ou matériel)', '<input type="file" name="photo" accept="image/*,application/pdf">'),
+        bouton: 'Enregistrer la réception',
+        apres: (form) => {
+          form.querySelectorAll('input[name=statut]').forEach((r) => {
+            r.onchange = () => {
+              const t = form.querySelector('input[name=statut]:checked').value;
+              form.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== t; });
+            };
+          });
+        },
+        valider: async (v) => {
+          if (!v.statut) throw new Error('Indiquez si la livraison est conforme, non conforme ou partielle.');
+          if (v.statut === 'partielle' && !v.nouvelleDate) throw new Error('Indiquez quand arrive le reste.');
+          const photo = v.photo && v.photo.size ? v.photo : null;
+          await agir('receptionCommande', {
+            id, statut: v.statut, nouvelleDate: v.nouvelleDate, dateReception: v.dateReception,
+            receptionPar: v.receptionPar, numBL: v.numBL, commentaire: v.commentaire
+          }, { conforme: 'Réception conforme enregistrée', non_conforme: 'Non conformité enregistrée, mail envoyé', partielle: 'Livraison partielle enregistrée' }[v.statut]);
+          if (photo) await televerser(photo, 'reception', c.dossierId, c.id);
         }
       });
     },
@@ -1007,22 +1580,33 @@
       img.src = url;
     });
   }
+  /** Envoie un fichier (PDF ou photo) au programme Google */
+  async function televerser(file, type, dossierId, commandeId, nomChoisi) {
+    if (file.size > 20 * 1024 * 1024) throw new Error('Fichier trop lourd (20 Mo maximum).');
+    let b64, mime = file.type, nom = file.name;
+    const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || [''])[0];
+    if (file.type.indexOf('image/') === 0) {
+      b64 = await reduirePhoto(file, 1600);
+      mime = 'image/jpeg';
+      if (!b64) mime = file.type;
+      nom = ({ arc: 'ARC ', reception: 'Réception ', pv: 'PV ', reserve: 'Réserve ', devis: 'Devis ' }[type] || 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
+    }
+    if (!b64) b64 = await lireBase64(file);
+    let nomFichier = nom;
+    if (nomChoisi) {
+      nom = nomChoisi;
+      nomFichier = nomChoisi + (mime === 'image/jpeg' && file.type !== 'image/jpeg' ? '.jpg' : ext);
+    }
+    toast('Envoi en cours…');
+    await agir('envoyerFichier', { dossierId, commandeId: commandeId || '', type, base64: b64, mime, nom, nomFichier },
+      { arc: 'PDF de l\'ARC enregistré', reception: 'Photo de réception enregistrée', pv: 'Document du PV enregistré', reserve: 'Photo de réserve enregistrée', devis: 'Document du devis enregistré', divers: 'Document enregistré' }[type] || 'Photo enregistrée');
+  }
+
   async function envoyerFichier(inp) {
     const file = inp.files && inp.files[0];
     if (!file) return;
-    if (file.size > 20 * 1024 * 1024) { toast('Fichier trop lourd (20 Mo maximum).', true); return; }
-    const type = inp.dataset.upload;
     try {
-      let b64, mime = file.type, nom = file.name;
-      if (file.type.indexOf('image/') === 0) {
-        b64 = await reduirePhoto(file, 1600);
-        mime = 'image/jpeg';
-        nom = (type === 'arc' ? 'ARC ' : 'Photo ') + new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h') + '.jpg';
-      }
-      if (!b64) b64 = await lireBase64(file);
-      toast('Envoi en cours…');
-      await agir('envoyerFichier', { dossierId: inp.dataset.dossier, commandeId: inp.dataset.cmd || '', type, base64: b64, mime, nom },
-        type === 'arc' ? 'PDF de l\'ARC enregistré' : 'Photo enregistrée');
+      await televerser(file, inp.dataset.upload, inp.dataset.dossier, inp.dataset.cmd);
       await afficher();
     } catch (e) {
       toast(e.message, true);
@@ -1040,6 +1624,16 @@
 
   const ACTIONS = {
     logout: () => deconnecter(),
+    installer: async () => {
+      if (!invitationInstall) return;
+      invitationInstall.prompt();
+      try { await invitationInstall.userChoice; } catch (e) { /* ignore */ }
+      invitationInstall = null;
+      afficher();
+    },
+    notifOn: (el) => essayer(async () => { el.disabled = true; try { await activerNotifications(); } finally { el.disabled = false; } await afficher(); }),
+    notifOff: () => essayer(async () => { await desactiverNotifications(); await afficher(); }),
+    notifTest: () => essayer(async () => { await api('notifTest'); toast('Notification envoyée : elle doit arriver dans quelques secondes.'); }),
     refresh: () => essayer(() => rafraichir('Données à jour')),
     scan: () => essayer(async () => {
       const avant = S.data.dossiers.length;
@@ -1081,6 +1675,9 @@
         (motif) => agir('supprimerCommande', { id: c.id, motif }, 'Commande supprimée'), 'danger');
     },
     modifFacture: (el) => FORMS.modifFacture(el.dataset.id),
+    reception: (el) => FORMS.reception(el.dataset.id),
+    annulerReception: (el) => FORMS.avecMotif('Annuler cette réception ?', 'La commande redevient « à réceptionner ».', 'Annuler la réception',
+      (motif) => agir('annulerReception', { id: el.dataset.id, motif }, 'Réception annulée')),
     supprFacture: (el) => FORMS.avecMotif('Supprimer cette demande de facture ?', 'La demande de facture intermédiaire sera retirée.', 'Supprimer',
       (motif) => agir('supprimerFacture', { id: el.dataset.id, motif }, 'Demande supprimée'), 'danger'),
     annulerFacture: (el) => FORMS.avecMotif('Annuler « facture faite » ?', 'La facture redevient « à faire » et le rappel repartira d\'aujourd\'hui. Si c\'est la facture finale, le dossier revient en « À facturer ».', 'Annuler la facture',
@@ -1089,10 +1686,17 @@
     supprCom: (el) => FORMS.confirmer('Supprimer ce commentaire ?', 'Le commentaire (et la photo, s\'il y en a une) ne sera plus affiché. La photo reste dans Google Drive.', 'Supprimer',
       () => agir('supprimerCommentaire', { id: el.dataset.id }, 'Commentaire supprimé'), 'danger'),
     termine: (el) => FORMS.termine(el.dataset.id),
+    pv: (el) => FORMS.pv(el.dataset.id),
+    docDevis: (el) => FORMS.docDevis(el.dataset.id),
+    deposer: (el) => FORMS.deposer(el.dataset.id),
+    renommerDoc: (el) => FORMS.renommerDoc(el.dataset.id),
+    supprDoc: (el) => FORMS.confirmer('Retirer ce document ?', 'Il ne sera plus affiché dans le dossier. Le fichier part dans la corbeille Google Drive, où il reste récupérable pendant 30 jours.', 'Retirer',
+      () => agir('supprimerDocument', { id: el.dataset.id }, 'Document retiré'), 'danger'),
     saveMails: () => essayer(async () => {
       const mails = Array.from(document.querySelectorAll('details.mail')).map((box) => {
         const g = (n) => box.querySelector('[name=' + n + ']');
         const m = { cle: box.dataset.mail, active: g('active').checked ? 'oui' : 'non', destinataires: g('destinataires').value.trim(), objet: g('objet').value, texte: g('texte').value };
+        if (g('copieTechniciens')) m.copieTechniciens = g('copieTechniciens').checked ? 'oui' : 'non';
         if (g('delaiJours')) m.delaiJours = g('delaiJours').value || '0';
         if (g('rythmeJours')) m.rythmeJours = g('rythmeJours').value || '1';
         if (g('heure')) {
@@ -1119,7 +1723,8 @@
         email: tr.querySelector('[name=email]').value.trim().toLowerCase(),
         nom: tr.querySelector('[name=nom]').value.trim(),
         role: tr.querySelector('[name=role]').value,
-        actif: tr.querySelector('[name=actif]').checked ? 'oui' : 'non'
+        actif: tr.querySelector('[name=actif]').checked ? 'oui' : 'non',
+        canal: tr.querySelector('[name=canal]').value
       })).filter((u) => u.email);
       await agir('enregistrerUtilisateurs', { users }, 'Utilisateurs enregistrés');
       await afficher();
@@ -1131,6 +1736,31 @@
   };
 
   function apresAffichage(page) {
+    if (page === '') {
+      const inp = $('#loupe');
+      const box = $('#loupe-res');
+      const chercher = () => {
+        const q = sansAccent(inp.value).trim();
+        if (!q) { box.hidden = true; box.innerHTML = ''; return; }
+        const docsDe = (d) => (S.data.documents || []).filter((x) => x.dossierId === d.id);
+        const res = S.data.dossiers.filter((d) => sansAccent([d.client, d.titreRdv, d.chantier, d.numDevis, d.numCommande, d.lieu]
+          .concat(docsDe(d).map((x) => x.nom)).join(' ')).indexOf(q) >= 0)
+          .sort((a, b) => (ouvert(b) - ouvert(a)) || ((b.majLe || '') > (a.majLe || '') ? 1 : -1)).slice(0, 12);
+        box.innerHTML = res.length ? res.map((d) => {
+          const doc = docsDe(d).find((x) => sansAccent(x.nom).indexOf(q) >= 0);
+          return '<a class="loupe-item" href="#/dossier/' + d.id + '"><span><strong>' + esc(nomClient(d)) + '</strong>' +
+            (d.chantier && d.chantier !== nomClient(d) ? ' · ' + esc(d.chantier) : '') +
+            '<span class="muted small">' + [d.numDevis && 'Devis ' + esc(d.numDevis), d.numCommande && 'Commande ' + esc(d.numCommande), d.lieu && esc(d.lieu),
+              doc ? 'document « ' + esc(doc.nom) + ' »' : ''].filter(Boolean).map((x) => ' · ' + x).join('') + '</span></span>' + pillEtape(d) + '</a>';
+        }).join('') : '<div class="loupe-vide">Aucun dossier ne correspond.</div>';
+        box.hidden = false;
+      };
+      inp.oninput = chercher;
+      inp.onkeydown = (ev) => {
+        if (ev.key === 'Enter') { const a = box.querySelector('a'); if (a) location.hash = a.getAttribute('href'); }
+        if (ev.key === 'Escape') { inp.value = ''; chercher(); }
+      };
+    }
     if (page === 'archives') {
       const s = $('#search');
       resultatsRecherche('');
@@ -1181,12 +1811,34 @@
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.matches('input[type=file][data-upload]')) envoyerFichier(t);
+    if (t.matches('input[data-canal]')) {
+      essayer(async () => { await agir('monCanal', { canal: t.value }, 'Choix enregistré'); });
+    }
     if (t.matches('input[data-arc]')) {
       essayer(async () => {
         await agir('modifierCommande', { id: t.dataset.arc, arcControle: t.checked ? 'oui' : 'non' }, t.checked ? 'ARC contrôlé' : 'ARC à recontrôler');
         await afficher();
       });
     }
+  });
+  document.addEventListener('input', (ev) => {
+    const t = ev.target;
+    if (!t.matches('[data-docsearch]')) return;
+    const q = sansAccent(t.value).trim();
+    const carte = t.closest('.card');
+    let n = 0;
+    carte.querySelectorAll('.doc').forEach((el) => {
+      const ok = !q || (el.dataset.nom || '').indexOf(q) >= 0;
+      el.hidden = !ok;
+      if (ok) n++;
+    });
+    carte.querySelectorAll('.docs').forEach((g) => {
+      const titre = g.previousElementSibling;
+      const visible = Array.from(g.children).some((x) => !x.hidden);
+      g.hidden = !visible;
+      if (titre && titre.classList.contains('muted') && titre.tagName === 'DIV') titre.hidden = !visible;
+    });
+    carte.querySelector('.doc-vide').hidden = n > 0;
   });
   window.addEventListener('hashchange', afficher);
   $('#menu-btn').onclick = () => {

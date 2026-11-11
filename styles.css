@@ -172,7 +172,7 @@ a.item-title:hover { color: var(--navy); text-decoration: underline; }
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: var(--ink); }
 .field small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; font-weight: 400; }
-input[type=text], input[type=email], input[type=number], input[type=date], select, textarea {
+input[type=text], input[type=email], input[type=number], input[type=date], input[type=search], select, textarea {
   width: 100%; font: inherit; color: var(--ink); background: #fff; border: 1px solid #CFD4DE; border-radius: 8px; padding: 9px 11px; min-height: 40px;
 }
 textarea { resize: vertical; min-height: 90px; }
@@ -265,3 +265,49 @@ input[type=range] { width: 100%; height: 36px; accent-color: var(--green); }
 .link { background: none; border: 0; padding: 0; font: inherit; color: var(--navy); text-decoration: underline; cursor: pointer; font-size: 12px; }
 .link.danger, .btn.ghost.danger { color: var(--red); }
 .mini-list li .actions .btn { padding: 6px 10px; }
+
+/* Documents du PV de réception */
+.docs { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.doc { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; display: flex; flex-direction: column; }
+.doc a { display: flex; flex-direction: column; text-decoration: none; color: var(--ink); flex: 1; }
+.doc img { width: 100%; height: 84px; object-fit: cover; background: var(--navy-soft); display: block; }
+.doc .doc-ico { height: 84px; display: grid; place-items: center; background: var(--navy-soft); color: var(--navy); font-weight: 700; font-size: 14px; }
+.doc .doc-nom { font-size: 12px; padding: 6px 8px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc .link { align-self: flex-start; margin: 0 8px 6px; }
+.modal h3 { font-weight: 600; }
+.doc[hidden], .docs[hidden] { display: none; }
+.doc .doc-liens { display: flex; gap: 10px; margin: 0 8px 6px; }
+.doc .doc-liens .link { margin: 0; }
+.doc .doc-type { font-weight: 600; color: var(--navy); }
+
+/* Loupe du tableau de bord */
+.loupe { position: relative; margin: 0 0 20px; }
+.loupe-ico { position: absolute; left: 14px; top: 13px; color: var(--muted); pointer-events: none; }
+.loupe input { padding: 12px 14px 12px 44px; min-height: 46px; font-size: 15px; border-radius: 10px; box-shadow: var(--shadow); }
+.loupe-res { position: absolute; left: 0; right: 0; top: calc(100% + 6px); background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(27,42,74,.15); z-index: 15; max-height: 420px; overflow-y: auto; }
+.loupe-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 14px; text-decoration: none; color: var(--ink); border-bottom: 1px solid var(--line); }
+.loupe-item:last-child { border-bottom: 0; }
+.loupe-item:hover, .loupe-item:focus { background: var(--navy-soft); outline: none; }
+.loupe-vide { padding: 14px; color: var(--muted); font-size: 14px; }
+
+/* Planning : périodes d'intervention */
+.interv-ligne { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--bg); }
+.interv-haut { display: grid; grid-template-columns: 1fr 140px auto; gap: 8px; margin-bottom: 8px; }
+.interv-ligne textarea { min-height: 56px; }
+input[type=time] { font: inherit; border: 1px solid #CFD4DE; border-radius: 8px; padding: 8px 10px; min-height: 40px; background: #fff; color: var(--ink); }
+.manques { margin: 0; padding-left: 20px; }
+.manques li { margin: 6px 0; }
+.mini-list.interv li { padding: 10px 0; }
+@media (max-width: 860px) { .interv-haut { grid-template-columns: 1fr 1fr auto; } }
+.interv-ligne .interv-haut { grid-template-columns: 28px 1fr 140px 36px; align-items: center; }
+.interv-lib { font-size: 13px; font-weight: 600; color: var(--muted); }
+.interv-aide { margin: -2px 0 8px 36px; }
+@media (max-width: 860px) { .interv-ligne .interv-haut { grid-template-columns: 26px 1fr 112px 32px; } .interv-aide { margin-left: 0; } }
+.step.manque .dot { background: var(--amber-soft); border-color: #D9A441; color: var(--amber); font-weight: 700; }
+.step.manque { color: var(--amber); }
+.step.manque::before { background: var(--green); }
+.steps .step { min-width: 84px; }
+
+/* Mon téléphone */
+.etapes-tel { margin: 0 0 8px; padding-left: 22px; line-height: 1.7; }
+.users select[name=canal] { min-width: 120px; }
