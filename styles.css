@@ -307,3 +307,7 @@ input[type=time] { font: inherit; border: 1px solid #CFD4DE; border-radius: 8px;
 .step.manque { color: var(--amber); }
 .step.manque::before { background: var(--green); }
 .steps .step { min-width: 84px; }
+
+/* Mon téléphone */
+.etapes-tel { margin: 0 0 8px; padding-left: 22px; line-height: 1.7; }
+.users select[name=canal] { min-width: 120px; }
