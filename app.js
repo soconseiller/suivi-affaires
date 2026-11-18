@@ -1,4 +1,4 @@
-/* Suivi affaires — écrans
+/* Kalisud (suivi des affaires) — écrans
  * Application sans outil de construction : du HTML, du CSS et ce fichier.
  * Toutes les données passent par le programme Google (voir config.js).
  */
@@ -277,7 +277,7 @@
       (n ? '<span class="badge' + (late ? ' late' : '') + '">' + n + '</span>' : '') + '</a>';
     const u = S.data.user;
     $('#nav').innerHTML =
-      '<div class="nav-brand"><strong>Suivi affaires</strong><span>' + esc(S.data.reglages.entreprise || '') + '</span></div>' +
+      '<div class="nav-brand"><img src="logo-kalisud.svg" alt="Kalisud – menuiserie alu &amp; pvc"><span>Suivi des affaires</span></div>' +
       lien('#/', 'Tableau de bord') +
       lien('#/devis', 'Devis à faire', c.devis, c.devisRetard) +
       lien('#/relances', 'Relances clients', c.relancesDues || '', c.relancesDues) +
@@ -384,7 +384,7 @@
     // Appli ouverte : la notification s'affiche quand même, en bas de l'écran et dans le téléphone
     messagerie.onMessage((p) => {
       const d = p.data || {};
-      const titre = (p.notification && p.notification.title) || d.titre || 'Suivi affaires';
+      const titre = (p.notification && p.notification.title) || d.titre || 'Kalisud';
       const texte = (p.notification && p.notification.body) || d.texte || '';
       toast(titre + (texte ? ' — ' + texte : ''));
       if (swEnreg && Notification.permission === 'granted') {
@@ -462,7 +462,7 @@
         '<div class="actions"><button class="btn primary" data-act="notifTest">M\'envoyer une notification d\'essai</button>' +
         '<button class="btn" data-act="notifOff">Désactiver sur cet appareil</button></div>';
     } else if (refuse) {
-      notif = '<p><span class="pill red">Bloquées</span> Les notifications sont bloquées pour cette appli. Autorisez-les dans les réglages du téléphone (Notifications → Suivi affaires), puis revenez ici.</p>';
+      notif = '<p><span class="pill red">Bloquées</span> Les notifications sont bloquées pour cette appli. Autorisez-les dans les réglages du téléphone (Notifications → Kalisud), puis revenez ici.</p>';
     } else {
       notif = '<p class="muted">Cet appareil ne reçoit pas encore les notifications.</p>' +
         '<button class="btn primary big" data-act="notifOn"' + (estIOS() && !estInstallee() ? ' disabled' : '') + '>Activer les notifications sur cet appareil</button>' +
