@@ -1,4 +1,4 @@
-/* Suivi affaires — service de fond du téléphone
+/* Kalisud — service de fond du téléphone
  * Reçoit les notifications Firebase même quand l'appli est fermée,
  * et ouvre le bon dossier quand on touche la notification.
  * La configuration Firebase est transmise dans l'adresse de ce fichier (?cfg=…).
