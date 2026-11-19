@@ -749,6 +749,10 @@
     const etapes = [];
     PARCOURS.forEach((e, i) => {
       if (e === 'commande') {
+        // Réponse du client : en attente tant que le devis est envoyé, complétée dès qu'il est validé ou refusé
+        etapes.push(d.etape === 'refuse'
+          ? { lib: 'Refusé', cls: 'refus', titre: 'Devis refusé' + (d.motifRefus ? ' : ' + d.motifRefus : '') }
+          : idx >= i ? { lib: 'Accepté', cls: 'done' } : { lib: 'En attente de réponse', cls: '' });
         // Commande client : validée dès que le devis est accepté (le matériel se suit dans les 3 étapes suivantes)
         etapes.push({ lib: 'Commande', cls: idx >= i ? 'done' : '' });
         return;
@@ -757,7 +761,8 @@
         // « Devis envoyé », « Chantier planifié » et « Facturé » sont des étapes accomplies : elles passent au vert,
         // et c'est l'étape suivante qui devient l'étape en cours.
         if (i === idx) posCourant = etapes.length;
-        etapes.push({ lib: ETAPES()[e], cls: idx < 0 ? '' : i < idx ? 'done' : i === idx ? (ACQUISES.indexOf(e) >= 0 ? 'done' : 'current') : '' });
+        const refuseAvant = d.etape === 'refuse' && i <= PARCOURS.indexOf('devis_envoye');
+        etapes.push({ lib: ETAPES()[e], cls: refuseAvant ? 'done' : idx < 0 ? '' : i < idx ? 'done' : i === idx ? (ACQUISES.indexOf(e) >= 0 ? 'done' : 'current') : '' });
         return;
       }
       sousEtapes.forEach((se) => {
@@ -773,7 +778,7 @@
       if (suivante >= 0) etapes[suivante].cls = 'current';
     }
     const steps = '<div class="steps" aria-label="Avancement du dossier">' + etapes.map((x) =>
-      '<div class="step ' + x.cls + '"' + (x.titre ? ' title="' + x.titre + '"' : '') + '><div class="dot">' + (x.cls === 'done' ? '✓' : x.cls === 'manque' ? '!' : '') + '</div>' + esc(x.lib) + '</div>').join('') + '</div>';
+      '<div class="step ' + x.cls + '"' + (x.titre ? ' title="' + x.titre + '"' : '') + '><div class="dot">' + (x.cls === 'done' ? '✓' : x.cls === 'manque' ? '!' : x.cls === 'refus' ? '✕' : '') + '</div>' + esc(x.lib) + '</div>').join('') + '</div>';
 
     const kv = (pairs) => '<dl class="kv">' + pairs.filter((p) => p[1]).map((p) => '<dt>' + p[0] + '</dt><dd>' + p[1] + '</dd>').join('') + '</dl>';
 
