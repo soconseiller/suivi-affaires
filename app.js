@@ -744,6 +744,8 @@
     ];
     const iMat = PARCOURS.indexOf('materiel');
     let courantVu = false;
+    let posCourant = -1;
+    const ACQUISES = ['devis_envoye', 'planifie', 'facture'];
     const etapes = [];
     PARCOURS.forEach((e, i) => {
       if (e === 'commande') {
@@ -752,7 +754,10 @@
         return;
       }
       if (e !== 'materiel') {
-        etapes.push({ lib: ETAPES()[e], cls: idx < 0 ? '' : i < idx ? 'done' : i === idx ? (e === 'facture' ? 'done' : 'current') : '' });
+        // « Devis envoyé », « Chantier planifié » et « Facturé » sont des étapes accomplies : elles passent au vert,
+        // et c'est l'étape suivante qui devient l'étape en cours.
+        if (i === idx) posCourant = etapes.length;
+        etapes.push({ lib: ETAPES()[e], cls: idx < 0 ? '' : i < idx ? 'done' : i === idx ? (ACQUISES.indexOf(e) >= 0 ? 'done' : 'current') : '' });
         return;
       }
       sousEtapes.forEach((se) => {
@@ -763,6 +768,10 @@
         etapes.push({ lib: se.lib, cls, titre: cls === 'manque' ? 'Étape non validée' : '' });
       });
     });
+    if (ACQUISES.indexOf(d.etape) >= 0 && posCourant >= 0 && !etapes.some((x) => x.cls === 'current')) {
+      const suivante = etapes.findIndex((x, k) => k > posCourant && !x.cls);
+      if (suivante >= 0) etapes[suivante].cls = 'current';
+    }
     const steps = '<div class="steps" aria-label="Avancement du dossier">' + etapes.map((x) =>
       '<div class="step ' + x.cls + '"' + (x.titre ? ' title="' + x.titre + '"' : '') + '><div class="dot">' + (x.cls === 'done' ? '✓' : x.cls === 'manque' ? '!' : '') + '</div>' + esc(x.lib) + '</div>').join('') + '</div>';
 
