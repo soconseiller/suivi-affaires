@@ -310,6 +310,9 @@ input[type=time] { font: inherit; border: 1px solid #CFD4DE; border-radius: 8px;
 @media (max-width: 860px) { .interv-ligne .interv-haut { grid-template-columns: 26px 1fr 112px 32px; } .interv-aide { margin-left: 0; } }
 .step.manque .dot { background: var(--amber-soft); border-color: #D9A441; color: var(--amber); font-weight: 700; }
 .step.manque { color: var(--amber); }
+.step.refus .dot { background: var(--red); border-color: var(--red); color: #fff; font-weight: 700; }
+.step.refus { color: var(--red); font-weight: 600; }
+.step.refus::before { background: var(--green); }
 .step.manque::before { background: var(--green); }
 .steps .step { min-width: 84px; }
 
