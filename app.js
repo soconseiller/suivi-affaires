@@ -115,7 +115,7 @@
     if (['devis_a_faire', 'devis_envoye', 'refuse', 'ignore'].indexOf(d.etape) >= 0) manque.push('Le devis n\'est pas validé par le client.');
     const cmds = S.data.commandes.filter((c) => c.dossierId === d.id);
     if (!cmds.length) manque.push('Le matériel n\'est pas commandé.');
-    cmds.filter((c) => c.arcControle !== 'oui').forEach((c) => manque.push('ARC non contrôlé : ' + c.fournisseur + '.'));
+    cmds.filter((c) => c.arcControle !== 'oui').forEach((c) => manque.push((c.arcControle === 'nc' ? 'ARC non conforme : ' : 'ARC non contrôlé : ') + c.fournisseur + '.'));
     cmds.filter((c) => c.receptionStatut !== 'conforme').forEach((c) => manque.push('Réception non validée conforme : ' + c.fournisseur + '.'));
     return manque;
   }
@@ -134,6 +134,18 @@
     const cls = { conforme: 'green', non_conforme: 'red', partielle: 'amber' }[st] || (c.dateLivraison && c.dateLivraison <= today() ? 'amber' : 'grey');
     return '<span class="pill ' + cls + '">' + LIB_RECEP[st] + '</span>';
   }
+  /* Contrôle de l'ARC : à contrôler, conforme, non conforme, corrigé à recontrôler */
+  function pillArc(c) {
+    if (c.arcControle === 'oui') return '<span class="pill green">ARC conforme</span>';
+    if (c.arcControle === 'nc') return '<span class="pill red">ARC non conforme</span>';
+    if (c.arcMotif) return '<span class="pill amber">ARC corrigé à recontrôler</span>';
+    return '<span class="pill grey">ARC à contrôler</span>';
+  }
+  const detailArcNc = (c) => c.arcControle === 'nc'
+    ? 'Motif : ' + esc(c.arcMotif) + ' · correction demandée le ' + fr(c.arcDemande) : '';
+  const btnArc = (c, cls) => c.arcControle === 'oui' ? '' : '<button class="btn ' + (cls || 'primary') + '" data-act="ctrlArc" data-id="' + c.id + '">Contrôler l\'ARC</button>';
+  const btnPdfArc = (c, dossierId) => '<label class="btn ghost">' + (c.arcControle === 'nc' ? 'Joindre l\'ARC corrigé' : c.arcFichier ? 'Remplacer le PDF' : 'Joindre le PDF') +
+    '<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + dossierId + '"></label>';
   const btnRecep = (c, cls) => '<button class="btn ' + (cls || 'primary') + '" data-act="reception" data-id="' + c.id + '">' +
     (c.receptionStatut === 'non_conforme' || c.receptionStatut === 'partielle' ? 'Nouvelle réception' : 'Valider la réception') + '</button>';
 
@@ -141,7 +153,8 @@
     devis: (d) => d.etape === 'devis_a_faire' && d.dateRdv && addDays(d.dateRdv, delai('devis_a_faire')) <= today(),
     relance: (d) => d.etape === 'devis_envoye' && d.prochaineRelance && d.prochaineRelance <= today(),
     materiel: (d) => d.etape === 'commande' && d.dateValidation && addDays(d.dateValidation, delai('commande_materiel')) <= today(),
-    arc: (c) => c.arcControle !== 'oui' && c.dateCommande && addDays(c.dateCommande, delai('arc')) <= today(),
+    arc: (c) => c.arcControle === 'nc' ? !!c.arcDemande && addDays(c.arcDemande, delai('arc_nc_relance')) <= today()
+      : c.arcControle !== 'oui' && c.dateCommande && addDays(c.dateCommande, delai('arc')) <= today(),
     reception: (c) => recepOuverte(c) && c.dateLivraison && addDays(c.dateLivraison, delai('reception')) <= today()
   };
 
@@ -633,18 +646,18 @@
       return ligne(d, {
         titre: nomChantier(d) + ' · ' + c.fournisseur,
         late: mode === 'arc' ? enRetard.arc(c) : mode === 'recep' ? (nc || enRetard.reception(c)) : false,
-        lateLabel: mode === 'arc' ? 'ARC en retard' : nc ? 'à traiter' : 'réception en retard',
+        lateLabel: mode === 'arc' ? (c.arcControle === 'nc' ? 'ARC corrigé en retard' : 'ARC en retard') : nc ? 'à traiter' : 'réception en retard',
         meta: ['Commandé le ' + fr(c.dateCommande), 'Livraison ' + fr(c.dateLivraison, true) + ' (' + relatif(c.dateLivraison) + ')',
-          mode === 'arc' ? '' : pillRecep(c),
+          mode === 'arc' ? pillArc(c) : pillRecep(c),
           c.arcFichier ? '<a href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">PDF de l\'ARC</a>' : ''],
-        note: (mode !== 'arc' && c.receptionCommentaire && c.receptionStatut ? 'Réception : ' + c.receptionCommentaire + '\n' : '') + (c.commentaire || ''),
-        actions: (mode === 'arc' ? '<button class="btn primary" data-act="arc" data-id="' + c.id + '" data-v="oui">ARC contrôlé</button>' +
-            '<label class="btn">Joindre le PDF<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + c.dossierId + '"></label>'
+        note: (mode === 'arc' && c.arcControle === 'nc' ? 'ARC non conforme : ' + c.arcMotif + ' (correction demandée le ' + fr(c.arcDemande) + ')\n' : '') +
+          (mode !== 'arc' && c.receptionCommentaire && c.receptionStatut ? 'Réception : ' + c.receptionCommentaire + '\n' : '') + (c.commentaire || ''),
+        actions: (mode === 'arc' ? btnArc(c, 'primary') + btnPdfArc(c, c.dossierId)
           : btnRecep(c, mode === 'recep' ? 'primary' : '')) +
           '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button>'
       });
     };
-    return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, ARC à contrôler, réceptions et livraisons à venir.</p></div></div>' +
+    return '<div class="page-head"><div><h1>Commandes</h1><p>Matériel à commander, ARC à contrôler ou non conformes, réceptions et livraisons à venir.</p></div></div>' +
       '<h2 class="section-title">Matériel à commander (' + aCommander.length + ')</h2>' +
       (aCommander.length ? '<div class="list">' + aCommander.map((d) => ligne(d, {
         late: enRetard.materiel(d),
@@ -739,7 +752,7 @@
     const cmds = commandes;
     const sousEtapes = [
       { lib: 'Matériel commandé', ok: cmds.length > 0 },
-      { lib: 'ARC contrôlé', ok: cmds.length > 0 && cmds.every((c) => c.arcControle === 'oui') },
+      { lib: 'ARC contrôlé', ok: cmds.length > 0 && cmds.every((c) => c.arcControle === 'oui'), nc: cmds.some((c) => c.arcControle === 'nc') },
       { lib: 'Réception conforme', ok: cmds.length > 0 && cmds.every((c) => c.receptionStatut === 'conforme') }
     ];
     const iMat = PARCOURS.indexOf('materiel');
@@ -767,6 +780,7 @@
       }
       sousEtapes.forEach((se) => {
         let cls = '';
+        if (se.nc) { etapes.push({ lib: 'ARC non conforme', cls: 'refus', titre: 'Un ARC est non conforme' }); courantVu = true; return; }
         if (se.ok) cls = 'done';
         else if ((idx === iMat || idx === iMat - 1) && !courantVu) { cls = 'current'; courantVu = true; }
         else if (idx > iMat) cls = 'manque';
@@ -830,9 +844,13 @@
         '<div class="small" style="margin:4px 0 8px">Livraison ' + fr(c.dateLivraison, true) + '</div>' +
         (c.commentaire ? '<div class="small muted" style="margin-bottom:8px">' + esc(c.commentaire) + '</div>' : '') +
         blocReception(c) +
-        '<div class="actions" style="align-items:center"><label class="check"><input type="checkbox" data-arc="' + c.id + '"' + (c.arcControle === 'oui' ? ' checked' : '') + '> ARC contrôlé</label>' +
-        (c.arcFichier ? '<a class="small" href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">Voir le PDF</a>' : '') +
-        '<label class="btn ghost">' + (c.arcFichier ? 'Remplacer le PDF' : 'Joindre le PDF') + '<input type="file" accept="application/pdf,image/*" hidden data-upload="arc" data-cmd="' + c.id + '" data-dossier="' + d.id + '"></label>' +
+        '<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:0 0 10px">' +
+        '<div class="actions" style="align-items:center;justify-content:space-between"><span><strong class="small">ARC</strong> ' + pillArc(c) +
+        (c.arcFichier ? ' <a class="small" href="https://drive.google.com/file/d/' + esc(c.arcFichier) + '/view" target="_blank" rel="noopener">Voir le PDF</a>' : '') + '</span>' +
+        '<span class="actions">' + btnArc(c, c.arcControle === 'nc' ? 'ghost' : '') +
+        (c.arcControle === 'oui' ? '<button class="btn ghost" data-act="arcRecontroler" data-id="' + c.id + '">Remettre à contrôler</button>' : '') + '</span></div>' +
+        (c.arcControle === 'nc' ? '<div class="small" style="margin-top:6px">' + detailArcNc(c) + '</div>' : '') + '</div>' +
+        '<div class="actions" style="align-items:center">' + btnPdfArc(c, d.id) +
         '<button class="btn ghost" data-act="modifCommande" data-id="' + c.id + '">Modifier</button>' +
         '<button class="btn ghost danger" data-act="supprCommande" data-id="' + c.id + '">Supprimer</button></div></div>').join('') + '</div>'
         : '<p class="muted">Aucune commande de matériel.</p>') + '</div>' +
@@ -1012,12 +1030,15 @@
     relance_client: 'Délai par défaut, en jours après l\'envoi du devis',
     commande_materiel: 'Premier rappel, en jours après la validation du devis',
     arc: 'Premier rappel, en jours après la commande',
+    arc_nc_relance: 'Premier rappel, en jours après la demande de correction au fournisseur',
     facture_inter: 'Premier rappel, en jours après la demande (0 = le jour même)',
     a_facturer: 'Premier rappel, en jours après la fin du chantier (0 = le jour même)'
   };
   const AIDE_MAIL = {
     reception: 'Envoyé quand la réception n\'est pas validée à la date de livraison prévue, puis selon le rythme, tant qu\'elle n\'est pas « conforme ».',
     reception_nc: 'Envoyé tout de suite quand une livraison est déclarée non conforme.',
+    arc_nc: 'Envoyé tout de suite quand un ARC est déclaré non conforme. Variables : {motif}, {date_demande}, {qui}.',
+    arc_nc_relance: 'Envoyé selon le rythme tant que l\'ARC corrigé n\'a pas été déposé dans l\'appli.',
     planning_tech: 'Envoyé tout de suite aux techniciens choisis sur le chantier, quand on les planifie ou qu\'on modifie le planning. Le champ « Envoyer à » n\'est pas utilisé pour ce message.',
     pv_reserves: 'Envoyé tout de suite quand un PV avec réserves est enregistré. Le PV et les photos sont joints.',
     a_facturer: 'Envoyé tout de suite quand le chantier est terminé, puis relancé selon le rythme. Les documents du PV sont joints.',
@@ -1037,8 +1058,8 @@
       const jours = String(m.jours || '').split(',');
       const k = m.cle;
       const avecDelai = !!LIB_DELAI[k];
-      const avecRythme = ['nouvelle_commande', 'livraison', 'recap', 'reception_nc', 'pv_reserves', 'planning_tech'].indexOf(k) < 0;
-      const avecHoraire = ['nouvelle_commande', 'reception_nc', 'pv_reserves', 'planning_tech'].indexOf(k) < 0;
+      const avecRythme = ['nouvelle_commande', 'livraison', 'recap', 'reception_nc', 'pv_reserves', 'planning_tech', 'arc_nc'].indexOf(k) < 0;
+      const avecHoraire = ['nouvelle_commande', 'reception_nc', 'pv_reserves', 'planning_tech', 'arc_nc'].indexOf(k) < 0;
       const avecCopie = ['pv_reserves', 'reception_nc', 'a_facturer', 'facture_inter'].indexOf(k) >= 0;
       const resume = m.active === 'oui'
         ? (avecHoraire ? jours.filter(Boolean).map((j) => LETTRES[Number(j) - 1]).join(' ') + ' à ' + m.heure + ' h' : 'immédiat')
@@ -1547,6 +1568,36 @@
         }
       });
     },
+    arc(id) {
+      const c = S.data.commandes.find((x) => x.id === id);
+      const d = parId(c.dossierId);
+      fenetre({
+        titre: 'Contrôle de l\'ARC', sousTitre: esc(nomChantier(d)) + ' · ' + esc(c.fournisseur) + ' · commandé le ' + fr(c.dateCommande),
+        corps: '<div class="choices" role="radiogroup" aria-label="Résultat du contrôle">' +
+          '<label><input type="radio" name="statut" value="oui"><span>Conforme</span></label>' +
+          '<label><input type="radio" name="statut" value="nc"><span>Non conforme</span></label></div>' +
+          '<div data-pane="nc" hidden>' +
+          champ('Motif *', '<textarea name="motif" rows="3" placeholder="Mauvaise cote, mauvais coloris, délai trop long…">' + esc(c.arcControle === 'nc' ? c.arcMotif : '') + '</textarea>') +
+          champ('Correction demandée au fournisseur le *', input('dateDemande', c.arcDemande || today(), 'date')) +
+          '<p class="help">Un mail prévient tout de suite, puis une relance part tant que l\'ARC corrigé n\'est pas déposé dans l\'appli.</p></div>',
+        bouton: 'Enregistrer',
+        apres: (form) => {
+          form.querySelectorAll('input[name=statut]').forEach((r) => {
+            r.onchange = () => {
+              const t = form.querySelector('input[name=statut]:checked').value;
+              form.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== t; });
+            };
+          });
+        },
+        valider: async (v) => {
+          if (!v.statut) throw new Error('Indiquez si l\'ARC est conforme ou non conforme.');
+          if (v.statut === 'oui') return agir('modifierCommande', { id, arcControle: 'oui' }, 'ARC conforme');
+          if (!String(v.motif || '').trim()) throw new Error('Le motif est obligatoire.');
+          if (!v.dateDemande) throw new Error('Indiquez la date de demande de correction.');
+          return agir('arcNonConforme', { id, motif: v.motif, dateDemande: v.dateDemande }, 'ARC non conforme enregistré, mail envoyé');
+        }
+      });
+    },
     modifFacture(id) {
       const f = S.data.factures.find((x) => x.id === id);
       fenetre({
@@ -1662,7 +1713,9 @@
     reponse: (el) => FORMS.reponse(el.dataset.id),
     commande: (el) => FORMS.commande(el.dataset.id),
     modifCommande: (el) => FORMS.modifCommande(el.dataset.id),
-    arc: (el) => essayer(async () => { await agir('modifierCommande', { id: el.dataset.id, arcControle: el.dataset.v }, 'ARC contrôlé'); await afficher(); }),
+    arc: (el) => essayer(async () => { await agir('modifierCommande', { id: el.dataset.id, arcControle: el.dataset.v }, 'ARC conforme'); await afficher(); }),
+    ctrlArc: (el) => FORMS.arc(el.dataset.id),
+    arcRecontroler: (el) => essayer(async () => { await agir('modifierCommande', { id: el.dataset.id, arcControle: 'non' }, 'ARC à recontrôler'); await afficher(); }),
     planifier: (el) => FORMS.planifier(el.dataset.id),
     modifier: (el) => FORMS.modifier(el.dataset.id),
     factureFaite: (el) => FORMS.confirmer('Facture faite ?', 'Confirmez que la facture a bien été faite.', 'Oui, facture faite',
